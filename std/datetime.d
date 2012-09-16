@@ -10,6 +10,8 @@
         $(LI Types to represent intervals of time.)
         $(LI Types to represent ranges over intervals of time.)
         $(LI Types to represent time zones (used by $(D SysTime)).)
+        $(LI A platform-independent, high precision stopwatch type:
+             $(D StopWatch))
         $(LI Benchmarking functions.)
         $(LI Various helper functions.)
     )
@@ -42,14 +44,14 @@
     and ranges can be gotten from time intervals, so range-based operations may
     be done on a series of time points.
 
-    The types that the typical user is most likely to be interested in
-    are $(D Date) (if they want dates but don't care about time), $(D
-    DateTime) (if they want dates and times but don't care about time
-    zones), and $(D SysTime) (if they want the date and time from the
-    OS and/or do care about time zones).  $(D Date) and $(D DateTime)
-    are optimized for calendar-based operations, while $(D SysTime) is
-    designed for dealing with time from the OS. Check out their
-    specific documentation for more details.
+    The types that the typical user is most likely to be interested in are
+    $(D Date) (if they want dates but don't care about time), $(D DateTime)
+    (if they want dates and times but don't care about time zones), $(D SysTime)
+    (if they want the date and time from the OS and/or do care about time
+    zones), and StopWatch (a platform-independent, high precision stop watch).
+    $(D Date) and $(D DateTime) are optimized for calendar-based operations,
+    while $(D SysTime) is designed for dealing with time from the OS. Check out
+    their specific documentation for more details.
 
     To get the current time, use $(D Clock.currTime). It will return the current
     time as a $(D SysTime). To print it, $(D toString) is
@@ -108,7 +110,6 @@ import core.stdc.time;
 import std.array;
 import std.algorithm;
 import std.ascii;
-import std.benchmark;
 import std.conv;
 import std.exception;
 import std.file;
@@ -289,6 +290,19 @@ enum PopFirst
 }
 
 /++
+   Used by StopWatch to indicate whether it should start immediately upon
+   construction.
+  +/
+enum AutoStart
+{
+    /// No, don't start the StopWatch when it is constructed.
+    no,
+
+    /// Yes, do start the StopWatch when it is constructed.
+    yes
+}
+
+/++
     Array of the strings representing time units, starting with the smallest
     unit and going to the largest. It does not include $(D "nsecs").
 
@@ -418,18 +432,10 @@ public:
     {
         version(Windows)
         {
-            //FILETIME represents hnsecs from midnight, January 1st, 1601.
-            enum hnsecsFrom1601 = 504_911_232_000_000_000L;
-
             FILETIME fileTime;
-
             GetSystemTimeAsFileTime(&fileTime);
 
-            ulong tempHNSecs = fileTime.dwHighDateTime;
-            tempHNSecs <<= 32;
-            tempHNSecs |= fileTime.dwLowDateTime;
-
-            return cast(long)tempHNSecs + hnsecsFrom1601;
+            return FILETIMEToStdTime(&fileTime);
         }
         else version(Posix)
         {
@@ -869,55 +875,42 @@ public:
         _assertPred!("opCmp", "==")(SysTime(Date.init, UTC()), SysTime(0));
         _assertPred!("opCmp", "==")(SysTime(0), SysTime(0));
 
-        static void testEqual(DateTime dt,
+        static void testEqual(SysTime st,
                               immutable TimeZone tz1,
                               immutable TimeZone tz2)
         {
-            auto st1 = SysTime(dt);
+            auto st1 = st;
             st1.timezone = tz1;
 
-            auto st2 = SysTime(dt);
+            auto st2 = st;
             st2.timezone = tz2;
 
             _assertPred!("opCmp", "==")(st1, st2);
         }
 
-        foreach(dt; chain(testDateTimesBC, testDateTimesAD))
-        {
-            foreach(tz1; testTZs)
-            {
-                foreach(tz2; testTZs)
-                    testEqual(dt, tz1, tz2);
-            }
-        }
+        auto sts = array(map!SysTime(chain(testDateTimesBC, testDateTimesAD)));
 
-        static void testCmp(DateTime dt1,
+        foreach(st; sts)
+            foreach(tz1; testTZs)
+                foreach(tz2; testTZs)
+                    testEqual(st, tz1, tz2);
+
+        static void testCmp(SysTime st1,
                             immutable TimeZone tz1,
-                            DateTime dt2,
+                            SysTime st2,
                             immutable TimeZone tz2)
         {
-            auto st1 = SysTime(dt1);
             st1.timezone = tz1;
-
-            auto st2 = SysTime(dt2);
             st2.timezone = tz2;
-
             _assertPred!("opCmp", "<")(st1, st2);
             _assertPred!("opCmp", ">")(st2, st1);
         }
 
-        auto dts = testDateTimesBC ~ testDateTimesAD;
-        foreach(tz1; testTZs)
-        {
-            foreach(tz2; testTZs)
-            {
-                for(size_t i = 0; i < dts.length; ++i)
-                {
-                    for(size_t j = i + 1; j < dts.length; ++j)
-                        testCmp(dts[i], tz1, dts[j], tz2);
-                }
-            }
-        }
+        foreach(si, st1; sts)
+            foreach(st2; sts[si+1 .. $])
+                foreach(tz1; testTZs)
+                    foreach(tz2; testTZs)
+                        testCmp(st1, tz1, st2, tz2);
 
         auto st = SysTime(DateTime(1999, 7, 6, 12, 33, 30));
         const cst = SysTime(DateTime(1999, 7, 6, 12, 33, 30));
@@ -7400,7 +7393,7 @@ assert(SysTime(DateTime(2000, 6, 4, 12, 22, 9)).daysInMonth == 30);
     }
 
     /++
-        $(RED Deprecated. It will be removed in August 2012.
+        $(RED Deprecated. It will be removed in September 2012.
               Please use daysInMonth instead.)
       +/
     deprecated @property ubyte endOfMonthDay() const nothrow
@@ -7947,15 +7940,6 @@ assert(SysTime(DateTime(-4, 1, 5, 0, 0, 2),
         }
         catch(Exception e)
             assert(0, "format() threw.");
-    }
-
-    /++
-        $(RED Deprecated. It will be removed in May 2012.
-              Please use toISOExtString instead.)
-      +/
-    deprecated string toISOExtendedString() const nothrow
-    {
-        return toISOExtString();
     }
 
     unittest
@@ -8505,16 +8489,6 @@ assert(SysTime.fromISOExtString("2010-07-04T07:06:12+8:00") ==
         }
         catch(DateTimeException dte)
             throw new DateTimeException(format("Invalid ISO Extended String: %s", isoExtString));
-    }
-
-    /++
-        $(RED Deprecated. It will be removed in May 2012.
-              Please use fromISOExtString instead.)
-      +/
-    deprecated static SysTime fromISOExtendedString(S)(in S isoExtString, immutable TimeZone tz = null)
-        if(isSomeString!(S))
-    {
-        return fromISOExtString!string(isoExtString, tz);
     }
 
     unittest
@@ -12432,7 +12406,7 @@ assert(Date(2000, 6, 4).daysInMonth == 30);
     }
 
     /++
-        $(RED Deprecated. It will be removed in August 2012.
+        $(RED Deprecated. It will be removed in September 2012.
               Please use daysInMonth instead.)
       +/
     deprecated @property ubyte endOfMonthDay() const pure nothrow
@@ -12674,15 +12648,6 @@ assert(Date(-4, 1, 5).toISOExtString() == "-0004-01-05");
         }
         catch(Exception e)
             assert(0, "format() threw.");
-    }
-
-    /++
-        $(RED Deprecated. It will be removed in May 2012.
-              Please use toISOExtString instead.)
-      +/
-    deprecated string toISOExtendedString() const nothrow
-    {
-        return toISOExtString();
     }
 
     unittest
@@ -12994,16 +12959,6 @@ assert(Date.fromISOExtString(" 2010-07-04 ") == Date(2010, 7, 4));
                     new DateTimeException(format("Invalid ISO Extended String: %s", isoExtString)));
 
         return Date(to!short(year), to!ubyte(month), to!ubyte(day));
-    }
-
-    /++
-        $(RED Deprecated. It will be removed in May 2012.
-              Please use fromISOExtString instead.)
-      +/
-    deprecated static Date fromISOExtendedString(S)(in S isoExtString)
-        if(isSomeString!(S))
-    {
-        return fromISOExtString!string(isoExtString);
     }
 
     unittest
@@ -14399,15 +14354,6 @@ assert(TimeOfDay(12, 30, 33).toISOExtString() == "123033");
             assert(0, "format() threw.");
     }
 
-    /++
-        $(RED Deprecated. It will be removed in May 2012.
-              Please use toISOExtString instead.)
-      +/
-    deprecated string toISOExtendedString() const nothrow
-    {
-        return toISOExtString();
-    }
-
     unittest
     {
         version(testStdDateTime)
@@ -14614,16 +14560,6 @@ assert(TimeOfDay.fromISOExtString(" 12:30:33 ") == TimeOfDay(12, 30, 33));
                 new DateTimeException(format("Invalid ISO Extended String: %s", isoExtString)));
 
         return TimeOfDay(to!int(hours), to!int(minutes), to!int(seconds));
-    }
-
-    /++
-        $(RED Deprecated. It will be removed in May 2012.
-              Please use fromISOExtString instead.)
-      +/
-    deprecated static TimeOfDay fromISOExtendedString(S)(in S isoExtString)
-        if(isSomeString!(S))
-    {
-        return fromISOExtString!string(isoExtString);
     }
 
     unittest
@@ -17363,7 +17299,7 @@ assert(DateTime(Date(2000, 6, 4), TimeOfDay(12, 22, 9)).daysInMonth == 30);
     }
 
     /++
-        $(RED Deprecated. It will be removed in August 2012.
+        $(RED Deprecated. It will be removed in September 2012.
               Please use daysInMonth instead.)
       +/
     deprecated @property ubyte endOfMonthDay() const pure nothrow
@@ -17584,15 +17520,6 @@ assert(DateTime(Date(-4, 1, 5), TimeOfDay(0, 0, 2)).toISOExtString() ==
             return format("%sT%s", _date.toISOExtString(), _tod.toISOExtString());
         catch(Exception e)
             assert(0, "format() threw.");
-    }
-
-    /++
-        $(RED Deprecated. It will be removed in May 2012.
-              Please use toISOExtString instead.)
-      +/
-    deprecated string toISOExtendedString() const nothrow
-    {
-        return toISOExtString();
     }
 
     unittest
@@ -17859,16 +17786,6 @@ assert(DateTime.fromISOExtString(" 2010-07-04T07:06:12 ") ==
         immutable tod = TimeOfDay.fromISOExtString(dstr[t+1 .. $]);
 
         return DateTime(date, tod);
-    }
-
-    /++
-        $(RED Deprecated. It will be removed in May 2012.
-              Please use fromISOExtString instead.)
-      +/
-    deprecated static DateTime fromISOExtendedString(S)(in S isoExtString)
-        if(isSomeString!(S))
-    {
-        return fromISOExtString!string(isoExtString);
     }
 
     unittest
@@ -18351,7 +18268,7 @@ Interval!Date(Date(1996, 1, 2), Date(2012, 3, 1));
 
         Examples:
 --------------------
-assert(Interval!Date(Date(1996, 1, 2), Dur.years(3)) ==
+assert(Interval!Date(Date(1996, 1, 2), dur!"years"(3)) ==
        Interval!Date(Date(1996, 1, 2), Date(1999, 1, 2)));
 --------------------
       +/
@@ -27719,9 +27636,9 @@ auto tz = TimeZone.getTimeZone("America/Los_Angeles");
 
                     //Whenever a leap second is added/removed,
                     //this will have to be adjusted.
-                    enum leapDiff = convert!("seconds", "hnsecs")(24);
-                    _assertPred!"=="(leapSTD.adjTime - leapDiff, std.adjTime);
-                    _assertPred!"=="(leapDST.adjTime - leapDiff, dst.adjTime);
+                    //enum leapDiff = convert!("seconds", "hnsecs")(25);
+                    //_assertPred!"=="(leapSTD.adjTime - leapDiff, std.adjTime);
+                    //_assertPred!"=="(leapDST.adjTime - leapDiff, dst.adjTime);
                 }
             }
 
@@ -29272,7 +29189,7 @@ assert(tz.dstName == "PDT");
         version(Posix)
             auto file = tzDatabaseDir ~ name;
         else version(Windows)
-            auto file = tzDatabaseDir ~ replace(strip(name), "/", sep);
+            auto file = tzDatabaseDir ~ replace(strip(name), "/", dirSeparator);
 
         enforce(file.exists, new DateTimeException(format("File %s does not exist.", file)));
         enforce(file.isFile, new DateTimeException(format("%s is not a file.", file)));
@@ -29581,10 +29498,10 @@ assert(tz.dstName == "PDT");
         version(Posix)
             subName = strip(subName);
         else version(Windows)
-            subName = replace(strip(subName), "/", sep);
+            subName = replace(strip(subName), "/", dirSeparator);
 
-        if(!tzDatabaseDir.endsWith(sep))
-            tzDatabaseDir ~= sep;
+        if(!tzDatabaseDir.endsWith(dirSeparator))
+            tzDatabaseDir ~= dirSeparator;
 
         enforce(tzDatabaseDir.exists, new DateTimeException(format("Directory %s does not exist.", tzDatabaseDir)));
         enforce(tzDatabaseDir.isDir, new DateTimeException(format("%s is not a directory.", tzDatabaseDir)));
@@ -30709,64 +30626,473 @@ unittest
     }
 }
 
+
+//==============================================================================
+// Section with StopWatch and Benchmark Code.
+//==============================================================================
+
+/++
+   $(D StopWatch) measures time as precisely as possible.
+
+   This class uses a high-performance counter. On Windows systems, it uses
+   $(D QueryPerformanceCounter), and on Posix systems, it uses
+   $(D clock_gettime) if available, and $(D gettimeofday) otherwise.
+
+   But the precision of $(D StopWatch) differs from system to system. It is
+   impossible to for it to be the same from system to system since the precision
+   of the system clock varies from system to system, and other system-dependent
+   and situation-dependent stuff (such as the overhead of a context switch
+   between threads) can also affect $(D StopWatch)'s accuracy.
+
+   Examples:
+--------------------
+void foo()
+{
+    StopWatch sw;
+    enum n = 100;
+    TickDuration[n] times;
+    TickDuration last = TickDuration.from!"seconds"(0);
+    foreach(i; 0..n)
+    {
+       sw.start(); //start/resume mesuring.
+       foreach(unused; 0..1_000_000)
+           bar();
+       sw.stop();  //stop/pause measuring.
+       //Return value of peek() after having stopped are the always same.
+       writeln((i + 1) * 1_000_000, " times done, lap time: ",
+               sw.peek().msecs, "[ms]");
+       times[i] = sw.peek() - last;
+       last = sw.peek();
+    }
+    real sum = 0;
+    // To know the number of seconds,
+    // use properties of TickDuration.
+    // (seconds, mseconds, useconds, hnsecs)
+    foreach(t; times)
+       sum += t.hnsecs;
+    writeln("Average time: ", sum/n, " hnsecs");
+}
+--------------------
+  +/
+@safe struct StopWatch
+{
+public:
+    //Verify Example
+    @safe unittest
+    {
+        void writeln(S...)(S args){}
+        static void bar() {}
+
+        StopWatch sw;
+        enum n = 100;
+        TickDuration[n] times;
+        TickDuration last = TickDuration.from!"seconds"(0);
+        foreach(i; 0..n)
+        {
+           sw.start(); //start/resume mesuring.
+           foreach(unused; 0..1_000_000)
+               bar();
+           sw.stop();  //stop/pause measuring.
+           //Return value of peek() after having stopped are the always same.
+           writeln((i + 1) * 1_000_000, " times done, lap time: ",
+                   sw.peek().msecs, "[ms]");
+           times[i] = sw.peek() - last;
+           last = sw.peek();
+        }
+        real sum = 0;
+        // To get the number of seconds,
+        // use properties of TickDuration.
+        // (seconds, mseconds, useconds, hnsecs)
+        foreach(t; times)
+           sum += t.hnsecs;
+        writeln("Average time: ", sum/n, " hnsecs");
+    }
+
+    /++
+       Auto start with constructor.
+      +/
+    this(AutoStart autostart)
+    {
+        if(autostart)
+            start();
+    }
+
+    version(testStdDateTime) @safe unittest
+    {
+        auto sw = StopWatch(AutoStart.yes);
+        sw.stop();
+    }
+
+
+    ///
+    bool opEquals(const StopWatch rhs) const pure nothrow
+    {
+        return opEquals(rhs);
+    }
+
+    /// ditto
+    bool opEquals(const ref StopWatch rhs) const pure nothrow
+    {
+        return _timeStart == rhs._timeStart &&
+               _timeMeasured == rhs._timeMeasured;
+    }
+
+
+    /++
+       Resets the stop watch.
+      +/
+    void reset()
+    {
+        if(_flagStarted)
+        {
+            // Set current system time if StopWatch is measuring.
+            _timeStart = Clock.currSystemTick;
+        }
+        else
+        {
+            // Set zero if StopWatch is not measuring.
+            _timeStart.length = 0;
+        }
+
+        _timeMeasured.length = 0;
+    }
+
+    version(testStdDateTime) @safe unittest
+    {
+        StopWatch sw;
+        sw.start();
+        sw.stop();
+        sw.reset();
+        assert(sw.peek().to!("seconds", real)() == 0);
+    }
+
+
+    /++
+       Starts the stop watch.
+      +/
+    void start()
+    {
+        assert(!_flagStarted);
+        _flagStarted = true;
+        _timeStart = Clock.currSystemTick;
+    }
+
+    version(testStdDateTime) @trusted unittest
+    {
+        StopWatch sw;
+        sw.start();
+        auto t1 = sw.peek();
+        bool doublestart = true;
+        try
+            sw.start();
+        catch(AssertError e)
+            doublestart = false;
+        assert(!doublestart);
+        sw.stop();
+        assert((t1 - sw.peek()).to!("seconds", real)() <= 0);
+    }
+
+
+    /++
+       Stops the stop watch.
+      +/
+    void stop()
+    {
+        assert(_flagStarted);
+        _flagStarted = false;
+        _timeMeasured += Clock.currSystemTick - _timeStart;
+    }
+
+    version(testStdDateTime) @trusted unittest
+    {
+        StopWatch sw;
+        sw.start();
+        sw.stop();
+        auto t1 = sw.peek();
+        bool doublestop = true;
+        try
+            sw.stop();
+        catch(AssertError e)
+            doublestop = false;
+        assert(!doublestop);
+        assert((t1 - sw.peek()).to!("seconds", real)() == 0);
+    }
+
+
+    /++
+       Peek at the amount of time which has passed since the stop watch was
+       started.
+      +/
+    TickDuration peek() const
+    {
+        if(_flagStarted)
+            return Clock.currSystemTick - _timeStart + _timeMeasured;
+
+        return _timeMeasured;
+    }
+
+    version(testStdDateTime) @safe unittest
+    {
+        StopWatch sw;
+        sw.start();
+        auto t1 = sw.peek();
+        sw.stop();
+        auto t2 = sw.peek();
+        auto t3 = sw.peek();
+        assert(t1 <= t2);
+        assert(t2 == t3);
+    }
+
+
+    /++
+       Set the amount of time which has been measured since the stop watch was
+       started.
+      +/
+    void setMeasured(TickDuration d)
+    {
+        reset();
+        _timeMeasured = d;
+    }
+
+    version(testStdDateTime) @safe unittest
+    {
+        StopWatch sw;
+        TickDuration t0;
+        t0.length = 100;
+        sw.setMeasured(t0);
+        auto t1 = sw.peek();
+        assert(t0 == t1);
+    }
+
+
+    /++
+       Confirm whether this stopwatch is measuring time.
+      +/
+    bool running() @property const pure nothrow
+    {
+        return _flagStarted;
+    }
+
+    version(testStdDateTime) @safe unittest
+    {
+        StopWatch sw1;
+        assert(!sw1.running);
+        sw1.start();
+        assert(sw1.running);
+        sw1.stop();
+        assert(!sw1.running);
+        StopWatch sw2 = AutoStart.yes;
+        assert(sw2.running);
+        sw2.stop();
+        assert(!sw2.running);
+        sw2.start();
+        assert(sw2.running);
+    }
+
+
+
+
+private:
+
+    // true if observing.
+    bool _flagStarted = false;
+
+    // TickDuration at the time of StopWatch starting measurement.
+    TickDuration _timeStart;
+
+    // Total time that StopWatch ran.
+    TickDuration _timeMeasured;
+}
+
+
+// workaround for bug4886
+@safe size_t lengthof(aliases...)() pure nothrow
+{
+    return aliases.length;
+}
+
+
+/++
+    Benchmarks code for speed assessment and comparison.
+
+    Params:
+        fun = aliases of callable objects (e.g. function names). Each should
+              take no arguments.
+        n   = The number of times each function is to be executed.
+
+    Returns:
+        The amount of time (as a $(CXREF time, TickDuration)) that it took to
+        call each function $(D n) times. The first value is the length of time
+        that it took to call $(D fun[0]) $(D n) times. The second value is the
+        length of time it took to call $(D fun[1]) $(D n) times. Etc.
+
+   Examples:
+--------------------
+int a;
+void f0() {}
+void f1() {auto b = a;}
+void f2() {auto b = to!(string)(a);}
+auto r = benchmark!(f0, f1, f2)(10_000);
+writefln("Milliseconds to call fun[0] n times: %s", r[0].to!("msecs", int));
+--------------------
+  +/
+TickDuration[lengthof!(fun)()] benchmark(fun...)(uint n)
+{
+    TickDuration[lengthof!(fun)()] result;
+    StopWatch sw;
+    sw.start();
+
+    foreach(i, unused; fun)
+    {
+        sw.reset();
+        foreach(j; 0 .. n)
+            fun[i]();
+        result[i] = sw.peek();
+    }
+
+    return result;
+}
+
+//Verify Examples.
+version(testStdDateTime) unittest
+{
+    void writefln(S...)(S args){}
+
+    int a;
+    void f0() {}
+    void f1() {auto b = a;}
+    void f2() {auto b = to!(string)(a);}
+    auto r = benchmark!(f0, f1, f2)(10_000);
+    writefln("Milliseconds to call fun[0] n times: %s", r[0].to!("msecs", int)());
+}
+
+version(testStdDateTime) @safe unittest
+{
+    int a;
+    void f0() {}
+    //void f1() {auto b = to!(string)(a);}
+    void f2() {auto b = (a);}
+    auto r = benchmark!(f0, f2)(100);
+}
+
+
+/++
+   Return value of benchmark with two functions comparing.
+  +/
+@safe struct ComparingBenchmarkResult
+{
+    /++
+       Evaluation value
+
+       This returns the evaluation value of performance as the ratio of
+       baseFunc's time over targetFunc's time. If performance is high, this
+       returns a high value.
+      +/
+    @property real point() const pure nothrow
+    {
+        return _baseTime.length / cast(const real)_targetTime.length;
+    }
+
+
+    /++
+       The time required of the base function
+      +/
+    @property public TickDuration baseTime() const pure nothrow
+    {
+        return _baseTime;
+    }
+
+
+    /++
+       The time required of the target function
+      +/
+    @property public TickDuration targetTime() const pure nothrow
+    {
+        return _targetTime;
+    }
+
+private:
+
+    this(TickDuration baseTime, TickDuration targetTime) pure nothrow
+    {
+        _baseTime = baseTime;
+        _targetTime = targetTime;
+    }
+
+    TickDuration _baseTime;
+    TickDuration _targetTime;
+}
+
+
+/++
+   Benchmark with two functions comparing.
+
+   Params:
+       baseFunc   = The function to become the base of the speed.
+       targetFunc = The function that wants to measure speed.
+       times      = The number of times each function is to be executed.
+
+   Examples:
+--------------------
+void f1() {
+   // ...
+}
+void f2() {
+   // ...
+}
+
+void main() {
+   auto b = comparingBenchmark!(f1, f2, 0x80);
+   writeln(b.point);
+}
+--------------------
+  +/
+ComparingBenchmarkResult comparingBenchmark(alias baseFunc,
+                                            alias targetFunc,
+                                            int times = 0xfff)()
+{
+    auto t = benchmark!(baseFunc, targetFunc)(times);
+    return ComparingBenchmarkResult(t[0], t[1]);
+}
+
+version(testStdDateTime) @safe unittest
+{
+    void f1x() {}
+    void f2x() {}
+    @safe void f1o() {}
+    @safe void f2o() {}
+    auto b1 = comparingBenchmark!(f1o, f2o, 1)(); // OK
+    //static auto b2 = comparingBenchmark!(f1x, f2x, 1); // NG
+}
+
+version(testStdDateTime) unittest
+{
+    void f1x() {}
+    void f2x() {}
+    @safe void f1o() {}
+    @safe void f2o() {}
+    auto b1 = comparingBenchmark!(f1o, f2o, 1)(); // OK
+    auto b2 = comparingBenchmark!(f1x, f2x, 1)(); // OK
+}
+
+//Bug# 8450
+version(testStdDateTime) unittest
+{
+    @safe    void safeFunc() {}
+    @trusted void trustFunc() {}
+    @system  void sysFunc() {}
+    auto safeResult  = comparingBenchmark!((){safeFunc();}, (){safeFunc();})();
+    auto trustResult = comparingBenchmark!((){trustFunc();}, (){trustFunc();})();
+    auto sysResult   = comparingBenchmark!((){sysFunc();}, (){sysFunc();})();
+    auto mixedResult1  = comparingBenchmark!((){safeFunc();}, (){trustFunc();})();
+    auto mixedResult2  = comparingBenchmark!((){trustFunc();}, (){sysFunc();})();
+    auto mixedResult3  = comparingBenchmark!((){safeFunc();}, (){sysFunc();})();
+}
+
+
 //==============================================================================
 // Section with public helper functions and templates.
 //==============================================================================
-
-/++
-    $(RED Deprecated. It will be removed in March 2012. This is only here to
-          help transition code which uses std.date to using std.datetime.)
-
-    Returns a $(D d_time) for the given $(D SysTime).
- +/
-deprecated long sysTimeToDTime(in SysTime sysTime)
-{
-    return convert!("hnsecs", "msecs")(sysTime.stdTime - 621355968000000000L);
-}
-
-version(testStdDateTime) unittest
-{
-    _assertPred!"=="(sysTimeToDTime(SysTime(DateTime(1970, 1, 1), UTC())),
-                    0);
-    _assertPred!"=="(sysTimeToDTime(SysTime(DateTime(1970, 1, 1), FracSec.from!"msecs"(1), UTC())),
-                    1);
-    _assertPred!"=="(sysTimeToDTime(SysTime(DateTime(1969, 12, 31, 23, 59, 59), FracSec.from!"msecs"(999), UTC())),
-                    -1);
-
-    _assertPred!"=="(sysTimeToDTime(SysTime(DateTime(1970, 1, 2), UTC())),
-                    86_400_000);
-    _assertPred!"=="(sysTimeToDTime(SysTime(DateTime(1969, 12, 31), UTC())),
-                    -86_400_000);
-}
-
-
-/++
-    $(RED Deprecated. It will be removed in March 2012. This is only here to
-          help transition code which uses std.date to using std.datetime.)
-
-    Returns a $(D SysTime) for the given $(D d_time).
- +/
-deprecated SysTime dTimeToSysTime(long dTime, immutable TimeZone tz = null)
-{
-    immutable hnsecs = convert!("msecs", "hnsecs")(dTime) + 621355968000000000L;
-
-    return SysTime(hnsecs, tz);
-}
-
-version(testStdDateTime) unittest
-{
-    _assertPred!"=="(dTimeToSysTime(0),
-                    SysTime(DateTime(1970, 1, 1), UTC()));
-    _assertPred!"=="(dTimeToSysTime(1),
-                    SysTime(DateTime(1970, 1, 1), FracSec.from!"msecs"(1), UTC()));
-    _assertPred!"=="(dTimeToSysTime(-1),
-                    SysTime(DateTime(1969, 12, 31, 23, 59, 59), FracSec.from!"msecs"(999), UTC()));
-
-    _assertPred!"=="(dTimeToSysTime(86_400_000),
-                    SysTime(DateTime(1970, 1, 2), UTC()));
-    _assertPred!"=="(dTimeToSysTime(-86_400_000),
-                    SysTime(DateTime(1969, 12, 31), UTC()));
-}
 
 
 /++
@@ -30971,6 +31297,22 @@ version(StdDdoc)
     /++
         $(BLUE This function is Windows-Only.)
 
+        Converts a $(D FILETIME) struct to the number of hnsecs since midnight,
+        January 1st, 1 A.D.
+
+        Params:
+            ft = The $(D FILETIME) struct to convert.
+
+        Throws:
+            $(D DateTimeException) if the given $(D FILETIME) cannot be
+            represented as the return value.
+      +/
+    long FILETIMEToStdTime(const FILETIME* ft);
+
+
+    /++
+        $(BLUE This function is Windows-Only.)
+
         Converts a $(D FILETIME) struct to a $(D SysTime).
 
         Params:
@@ -30980,10 +31322,25 @@ version(StdDdoc)
 
         Throws:
             $(D DateTimeException) if the given $(D FILETIME) will not fit in a
-            $(D SysTime) or if the $(D FILETIME) cannot be converted to a
-            $(D SYSTEMTIME).
+            $(D SysTime).
       +/
     SysTime FILETIMEToSysTime(const FILETIME* ft, immutable TimeZone tz = LocalTime());
+
+
+    /++
+        $(BLUE This function is Windows-Only.)
+
+        Converts a number of hnsecs since midnight, January 1st, 1 A.D. to a
+        $(D FILETIME) struct.
+
+        Params:
+            sysTime = The $(D SysTime) to convert.
+
+        Throws:
+            $(D DateTimeException) if the given value will not fit in a
+            $(D FILETIME).
+      +/
+    FILETIME stdTimeToFILETIME(long stdTime);
 
 
     /++
@@ -31109,15 +31466,24 @@ else version(Windows)
         }
     }
 
+    private enum hnsecsFrom1601 = 504_911_232_000_000_000L;
+
+    long FILETIMEToStdTime(const FILETIME* ft)
+    {
+        ULARGE_INTEGER ul;
+        ul.HighPart = ft.dwHighDateTime;
+        ul.LowPart = ft.dwLowDateTime;
+        ulong tempHNSecs = ul.QuadPart;
+
+        if(tempHNSecs > long.max - hnsecsFrom1601)
+            throw new DateTimeException("The given FILETIME cannot be represented as a stdTime value.");
+
+        return cast(long)tempHNSecs + hnsecsFrom1601;
+    }
 
     SysTime FILETIMEToSysTime(const FILETIME* ft, immutable TimeZone tz = LocalTime())
     {
-        SYSTEMTIME st = void;
-
-        if(!FileTimeToSystemTime(ft, &st))
-            throw new DateTimeException("FileTimeToSystemTime() failed.");
-
-        auto sysTime = SYSTEMTIMEToSysTime(&st, UTC());
+        auto sysTime = SysTime(FILETIMEToStdTime(ft), UTC());
         sysTime.timezone = tz;
 
         return sysTime;
@@ -31142,14 +31508,24 @@ else version(Windows)
     }
 
 
-    FILETIME SysTimeToFILETIME(SysTime sysTime)
+    FILETIME stdTimeToFILETIME(long stdTime)
     {
-        SYSTEMTIME st = SysTimeToSYSTEMTIME(sysTime.toUTC());
+        if(stdTime < hnsecsFrom1601)
+            throw new DateTimeException("The given stdTime value cannot be represented as a FILETIME.");
 
-        FILETIME ft = void;
-        SystemTimeToFileTime(&st, &ft);
+        ULARGE_INTEGER ul;
+        ul.QuadPart = cast(ulong)stdTime - hnsecsFrom1601;
+
+        FILETIME ft;
+        ft.dwHighDateTime = ul.HighPart;
+        ft.dwLowDateTime = ul.LowPart;
 
         return ft;
+    }
+
+    FILETIME SysTimeToFILETIME(SysTime sysTime)
+    {
+        return stdTimeToFILETIME(sysTime.stdTime);
     }
 
     unittest
@@ -31720,7 +32096,7 @@ version(StdDdoc)
 
         When the value that is returned by this function is destroyed,
         $(D func) will run. $(D func) is a unary function that takes a
-        $(CXREF TickDuration).
+        $(CXREF time, TickDuration).
 
         Examples:
 --------------------
@@ -31737,7 +32113,7 @@ writeln("benchmark end!");
 else
 {
     @safe auto measureTime(alias func)()
-        if(isSafe!func)
+        if(isSafe!((){StopWatch sw; unaryFun!func(sw.peek());}))
     {
         struct Result
         {
@@ -31755,7 +32131,7 @@ else
     }
 
     auto measureTime(alias func)()
-        if(!isSafe!func)
+        if(!isSafe!((){StopWatch sw; unaryFun!func(sw.peek());}))
     {
         struct Result
         {
@@ -31807,6 +32183,17 @@ version(testStdDateTime) unittest
         // @@@BUG@@@ doesn't work yet.
     }
     +/
+}
+
+//Bug# 8450
+version(testStdDateTime) unittest
+{
+    @safe    void safeFunc() {}
+    @trusted void trustFunc() {}
+    @system  void sysFunc() {}
+    auto safeResult  = measureTime!((a){safeFunc();})();
+    auto trustResult = measureTime!((a){trustFunc();})();
+    auto sysResult   = measureTime!((a){sysFunc();})();
 }
 
 //==============================================================================

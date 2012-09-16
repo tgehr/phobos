@@ -2096,9 +2096,6 @@ struct HTTP
 
         // Network settings
 
-        /// The URL to specify the location of the resource.
-        @property void url(const(char)[] url);
-
         /** Proxy
          *  See: $(WEB curl.haxx.se/libcurl/c/curl_easy_setopt.html#CURLOPTPROXY, _proxy)
          */
@@ -2642,7 +2639,7 @@ struct FTP
     this(const(char)[] url)
     {
         initialize();
-        
+
         this.url = url;
     }
 
