@@ -1,4 +1,4 @@
-//Written in the D programming language
+// Written in the D programming language
 
 /**
 Copyright: Copyright 2011-
@@ -33,9 +33,8 @@ The code above prints:
 
 ---
 ===============================================================================
-Benchmark                                              relative ns/iter  iter/s
+module_one                                             relative ns/iter  iter/s
 ===============================================================================
----[ module_one ]--------------------------------------------------------------
 fileWrite                                                        144.2K    6.9K
 fileRead                                                          27.1K   36.9K
 ===============================================================================
@@ -165,7 +164,7 @@ Benchmark                                              relative ns/iter  iter/s
 ===============================================================================
 file write                                                       140.2K    7.1K
 file read                                                517.8%   27.1K   36.9K
-array creation                                            1.2Kx  116.0     8.6M
+array creation                                          1284.3%  116.0     8.6M
 ===============================================================================
 ---
 
@@ -188,7 +187,7 @@ void printBenchmarks(funs...)(File target = stdout)
     {
         runBenchmarks(results);
     }
-    printResults(results, target);
+    printResults(results);
 }
 
 /**
@@ -276,24 +275,17 @@ struct BenchmarkResult
        $(D 1.0) if the benchmark has the same speed as its baseline,
        $(D 2.0) is the benchmark is twice as fast, and $(D 0.5) if the
        benchmark has half the speed. For non-_relative benchmarks, $(D
-       relative) is set to $(D NaN), which is testable with
-       $(XREF math,isNaN).
+       relative) is set to $(D NaN), which is testable with $(XREF
+       math,isNaN).
      */
     double relative;
 }
 
 /*
-  Given a bunch of aliases, benchmarks them all.
+  Given a bunch of aliases, benchmarks them all and returns their
+  respective durations.
 */
 private TickDuration[fun.length] benchmarkImpl(fun...)()
-// if (
-//     // First function must be callable with no arguments or one
-//     // argument of type uint
-//     (is(typeof(AliasOf!(fun[0])())) || is(typeof(AliasOf!(fun[0])(1u))))
-//     &&
-//     // Recurse for all other functions
-//     (lengthof!fun() == 1 || is(typeof(benchmark!(fun[1 .. $])())))
-//     )
 {
     immutable uint epochs = 1000;
     TickDuration minSignificantDuration = TickDuration.from!"usecs"(50);
@@ -389,8 +381,8 @@ unittest
         {auto b = to!dstring(a);})
         ();
     auto names = [ "intToString", "intToWstring", "intToDstring" ];
-    // foreach (i, timing; r)
-    //     writefln("%s: %sns/call", names[i], r[i].to!("nsecs", int)());
+    foreach (i, timing; r)
+        writefln("%s: %sns/call", names[i], r[i].to!("nsecs", int)());
 }
 
 // Verify Example 2
@@ -407,8 +399,8 @@ unittest
         (uint n) { foreach (i; 0 .. n) auto b = to!dstring(a); })
         ();
     auto names = [ "intToString", "intToWstring", "intToDstring" ];
-    // foreach (i, timing; r)
-    //     writefln("%s: %sns/call", names[i], r[i].to!("nsecs", int)());
+    foreach (i, timing; r)
+        writefln("%s: %sns/call", names[i], r[i].to!("nsecs", int)());
 }
 
 /*
@@ -645,7 +637,7 @@ Prints benchmark results as described with $(LREF
 printBenchmarks). This is useful if benchmark postprocessing is
 desired before printing.
  */
-void printResults(BenchmarkResult[] data, File target = stdout)
+void printResults(in BenchmarkResult[] data, File target = stdout)
 {
     if (data.empty)
     {
@@ -653,36 +645,46 @@ void printResults(BenchmarkResult[] data, File target = stdout)
     }
 
     enum columns = 79;
-
-    target.writefln(
-        "=================================================="
-        "=============================\n"
-        "%-*s%8s%8s%8s\n" // sum must be equal to columns
-        "================================================="
-        "==============================", columns - 24, "Benchmark",
-        "relative", "ns/iter", "iter/s");
-
     string thisModule, thisGroup;
 
-    foreach (datum; data)
+    void printModuleHeader()
     {
-        if (thisModule != datum.moduleName)
+        target.writefln(
+            "=================================================="
+            "=============================\n"
+            "%-*s%8s%8s%8s\n"
+            "================================================="
+            "==============================", columns - 24,
+            thisModule is null ? "Benchmark" : thisModule,
+            "relative", "t/iter", "iter/s");
+    }
+
+    foreach (i, datum; data)
+    {
+        if (thisModule != datum.moduleName || i == 0)
         {
             thisModule = datum.moduleName;
-            // Print a line with module information
-            target.writeln("---[ ", thisModule, " ]",
-                    repeat('-', columns - thisModule.length - 7));
+            printModuleHeader();
         }
         double itersPerSecond = 1.0 / datum.perIteration.to!("seconds", double)();
         auto name = datum.benchmarkName;
-        if (datum.relative !is double.init)
+        if (datum.relative is double.init)
         {
+            // Write without relative information
+            target.writefln("%-*s %6.1ms  %6.1m",
+                    columns - 16, name,
+                    datum.perIteration.to!("seconds", double)(),
+                    itersPerSecond);
+        }
+        else
+        {
+            // Write with relative information
             double relative = datum.relative;
             string fmt;
             if (relative < 1000)
             {
                 // represent relative speed as percent
-                fmt = "%-*s  %6.1f%%  %6.1m  %6.1m";
+                fmt = "%-*s %7.1f%%  %6.1m  %6.1m";
                 relative *= 100;
             }
             else
@@ -693,14 +695,7 @@ void printResults(BenchmarkResult[] data, File target = stdout)
             target.writefln(fmt,
                     columns - 25, name,
                     relative,
-                    datum.perIteration.to!("nsecs", uint)(),
-                    itersPerSecond);
-        }
-        else
-        {
-            target.writefln("%-*s  %6.1m  %6.1m",
-                    columns - 16, name,
-                    datum.perIteration.to!("nsecs", uint)(),
+                    datum.perIteration.to!("seconds", double)(),
                     itersPerSecond);
         }
     }
