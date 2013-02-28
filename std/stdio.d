@@ -1000,6 +1000,7 @@ Range that reads one line at a time. */
         /// Ditto
         @property Char[] front()
         {
+            assert(!empty);
             if (first_call)
             {
                 popFront();
