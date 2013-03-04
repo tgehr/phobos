@@ -2766,6 +2766,13 @@ Assignment operators
         move(rhs, _refCounted._store._payload);
     }
 
+    /// Ditto
+    void opAssign(typeof(null))
+    {
+        destroy(this);
+        _refCounted._store = null;
+    }
+
     //version to have a single properly ddoc'ed function (w/ correct sig)
     version(StdDdoc)
     {
@@ -2818,6 +2825,14 @@ refCountedEnsureInitialized). Otherwise, just issues $(D
 assert(refCountedIsInitialized)).
  */
     alias refCountedPayload this;
+}
+
+/**
+Returns $(D true) if $(D obj) is $(D null).
+ */
+bool isNull(T)(auto ref RefCounted!T obj)
+{
+    return obj._refCounted._store !is null;
 }
 
 unittest
