@@ -956,8 +956,8 @@ Returns the file number corresponding to this object.
     }
 
 /**
-Range that reads one line at a time. */
-    /// ditto
+Range that reads one line at a time.
+ */
     struct ByLine(Char, Terminator)
     {
         File file;
@@ -1028,8 +1028,9 @@ Range that reads one line at a time. */
     }
 
 /**
-Convenience function that returns the $(D LinesReader) corresponding
-to this file. */
+Convenience function that returns the $(D ByLine) corresponding to
+this file.
+ */
     ByLine!(Char, Terminator) byLine(Terminator = char, Char = char)
     (KeepTerminator keepTerminator = KeepTerminator.no,
             Terminator terminator = '\n')
@@ -1117,39 +1118,70 @@ to this file. */
         // }
     }
 
+/**
+Input range that iterates through a file a chunk at a time. The chunk
+size is chosen by the user.
 
-    /**
-     * Range that reads a chunk at a time.
-     */
+Example:
+---------
+void main()
+{
+    // Read standard input 4KB at a time
+    foreach (ubyte[] buffer; stdin.byChunk(4096))
+    {
+        ... use buffer ...
+    }
+}
+---------
+
+The parameter may be a number (as shown in the example) dictating the
+size of each chunk. Alternatively, $(D byChunk) accepts a
+user-provided buffer that it uses directly. The content of the buffer
+is reused across calls. In the example above, $(D buffer.length) is
+4096 for all iterations, except for the last one, in which case $(D
+buffer.length) may be less than 4096 (but always greater than zero).
+
+Returns: A call to $(D byChunk) returns a call to a $(D ByChunk)
+object initialized with the $(D File) object and the appropriate
+buffer.
+
+Throws: If the user-provided size is zero or the user-provided buffer
+is empty, throws an $(D Exception). In case of an I/O error throws
+$(D StdioException).
+ */
     struct ByChunk
     {
-      private:
+    private:
         File    file_;
         ubyte[] chunk_;
 
+        void prime()
+        {
+            chunk_ = file_.rawRead(chunk_);
+            if (chunk_.length == 0)
+                file_.detach();
+        }
 
-      public:
+    public:
         this(File file, size_t size)
-        in
         {
-            assert(size, "size must be larger than 0");
-        }
-        body
-        {
-            file_  = file;
-            chunk_ = new ubyte[](size);
-
-            popFront();
+            this(file, new ubyte[](size));
         }
 
+        this(File file, ubyte[] buffer)
+        {
+            enforce(buffer.length, "size must be larger than 0");
+            file_ = file;
+            chunk_ = buffer;
+            prime();
+        }
 
-        /// Range primitive operations.
+        /// $(D ByChunk)'s input range primitive operations.
         @property nothrow
         bool empty() const
         {
             return !file_.isOpen;
         }
-
 
         /// Ditto
         @property nothrow
@@ -1159,43 +1191,23 @@ to this file. */
             return chunk_;
         }
 
-
         /// Ditto
         void popFront()
         {
             version(assert) if (empty) throw new RangeError();
-
-            chunk_ = file_.rawRead(chunk_);
-            if (chunk_.length == 0)
-                file_.detach();
+            prime();
         }
     }
 
-/**
-Iterates through a file a chunk at a time by using $(D foreach).
-
-Example:
-
----------
-void main()
-{
-  foreach (ubyte[] buffer; stdin.byChunk(4096))
-  {
-    ... use buffer ...
-  }
-}
----------
-
-The content of $(D buffer) is reused across calls. In the example
-above, $(D buffer.length) is 4096 for all iterations, except for the
-last one, in which case $(D buffer.length) may be less than 4096 (but
-always greater than zero).
-
-In case of an I/O error, an $(D StdioException) is thrown.
- */
+/// Ditto
     ByChunk byChunk(size_t chunkSize)
     {
         return ByChunk(this, chunkSize);
+    }
+/// Ditto
+    ByChunk byChunk(ubyte[] buffer)
+    {
+        return ByChunk(this, buffer);
     }
 
     unittest
@@ -1216,6 +1228,29 @@ In case of an I/O error, an $(D StdioException) is thrown.
 
         uint i;
         foreach (chunk; f.byChunk(4))
+            assert(chunk == cast(ubyte[])witness[i++]);
+
+        assert(i == witness.length);
+    }
+
+    unittest
+    {
+        scope(failure) printf("Failed test at line %d\n", __LINE__);
+
+        auto deleteme = testFilename();
+        std.file.write(deleteme, "asd\ndef\nasdf");
+
+        auto witness = ["asd\n", "def\n", "asdf" ];
+        auto f = File(deleteme);
+        scope(exit)
+        {
+            f.close();
+            assert(!f.isOpen);
+            std.file.remove(deleteme);
+        }
+
+        uint i;
+        foreach (chunk; f.byChunk(new ubyte[4]))
             assert(chunk == cast(ubyte[])witness[i++]);
 
         assert(i == witness.length);
