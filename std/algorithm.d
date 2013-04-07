@@ -916,7 +916,7 @@ For floating point inputs, calculations are made in $(D real)
 precision for $(D real) inputs and in $(D double) precision otherwise.
  */
 auto sum(R)(R r)
-if (isInputRange!R && !isFloatingPoint!(ElementType!R))
+if (isInputRange!R && !isFloatingPoint!(ElementType!R) && !isInfinite!R)
 {
     alias E = ElementType!R;
     static if (isIntegral!E || is(Unqual!E == bool))
@@ -944,9 +944,25 @@ unittest
     assert(sum([false, true, true, false, true]) == 3);
 }
 
+unittest
+{
+    static assert(is(typeof(sum([1, 2, 3, 4])) == long));
+    static assert(is(typeof(sum([1U, 2U, 3U, 4U])) == ulong));
+    static assert(is(typeof(sum([1L, 2L, 3L, 4L])) == long));
+    static assert(is(typeof(sum([1UL, 2UL, 3UL, 4UL])) == ulong));
+
+    int[] empty;
+    assert(sum(empty) == 0);
+    assert(sum([42]) == 42);
+    assert(sum([42, 43]) == 42 + 43);
+    assert(sum([42, 43, 44]) == 42 + 43 + 44);
+    assert(sum([42, 43, 44, 45]) == 42 + 43 + 44 + 45);
+}
+
 // Pairwise summation http://en.wikipedia.org/wiki/Pairwise_summation
 ElementType!R sum(R)(R r)
-if (isRandomAccessRange!R && hasLength!R && isFloatingPoint!(ElementType!R))
+if (isRandomAccessRange!R && hasSlicing!R && hasLength!R
+    && isFloatingPoint!(ElementType!R))
 {
     switch (r.length)
     {
@@ -955,6 +971,19 @@ if (isRandomAccessRange!R && hasLength!R && isFloatingPoint!(ElementType!R))
     case 2: return r.front + r[1];
     default: return sum(r[0 .. $ / 2]) + sum(r[$ / 2 .. $]);
     }
+}
+
+unittest
+{
+    static assert(is(typeof(sum([1., 2., 3., 4.])) == double));
+    static assert(is(typeof(sum([1F, 2F, 3F, 4F])) == float));
+
+    double[] empty;
+    assert(sum(empty) == 0);
+    assert(sum([42.]) == 42);
+    assert(sum([42., 43.]) == 42 + 43);
+    assert(sum([42., 43., 44.]) == 42 + 43 + 44);
+    assert(sum([42., 43., 44., 45.5]) == 42 + 43 + 44 + 45.5);
 }
 
 // Kahan algo http://en.wikipedia.org/wiki/Kahan_summation_algorithm
@@ -979,7 +1008,14 @@ if (isInputRange!R && !isRandomAccessRange!R
 
 unittest
 {
-    assert(sum(SList!double(1, 2, 3, 4)[]) == 10);
+    static assert(is(typeof(sum(SList!float()[])) == double));
+    static assert(is(typeof(sum(SList!double()[])) == double));
+    static assert(is(typeof(sum(SList!real()[])) == real));
+
+    assert(sum(SList!double()[]) == 0);
+    assert(sum(SList!double(1)[]) == 1);
+    assert(sum(SList!double(1, 2)[]) == 1 + 2);
+    assert(sum(SList!double(1, 2, 3)[]) == 1 + 2 + 3);
 }
 
 /**
