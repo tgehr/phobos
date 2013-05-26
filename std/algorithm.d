@@ -990,7 +990,7 @@ auto sum(R)(R r)
 if (isInputRange!R && !isRandomAccessRange!R
     && !isInfinite!R && isFloatingPoint!(ElementType!R))
 {
-    static if (ElementType!R.sizeof == real.sizeof)
+    static if (is(Unqual!(ElementType!R) == real))
         alias Result = real;
     else
         alias Result = double;
