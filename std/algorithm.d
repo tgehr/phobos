@@ -146,7 +146,7 @@ until a specific value is found.)
 $(LEADINGROW Comparison
 )
 $(TR $(TDNW $(LREF cmp)) $(TD $(D cmp("abc", "abcd")) is $(D
--1), $(D cmp("abc", aba")) is $(D 1), and $(D cmp("abc", "abc")) is
+-1), $(D cmp("abc", "aba")) is $(D 1), and $(D cmp("abc", "abc")) is
 $(D 0).)
 )
 $(TR $(TDNW $(LREF equal)) $(TD Compares ranges for
@@ -4795,25 +4795,7 @@ unittest
     }
 }
 
-/**
- *  $(RED Deprecated. It will be removed in January 2013.
- *        Currently defaults to $(LREF countUntil) instead.)
- *
- * Not to be confused with its homonym function
- * in $(D std.string).
- *
- * Please use $(D std.string.indexOf) if you wish to find
- * the index of a character in a string.
- *
- * Otherwise, please use $(D std.string.countUntil) to find
- * an element's logical position in a range.
- *
- * Example:
- * --------
- * assert(std.string.indexOf("日本語", '本') == 3);
- * assert(std.algorithm.countUntil("日本語", '本') == 1);
- * --------
- */
+// Explicitly undocumented. It will be removed in November 2013.
 deprecated("Please use std.algorithm.countUntil instead.")
 ptrdiff_t indexOf(alias pred = "a == b", R1, R2)(R1 haystack, R2 needle)
 if (is(typeof(startsWith!pred(haystack, needle))))
@@ -9230,13 +9212,14 @@ Returns: The initial range wrapped as a $(D SortedRange) with the
 predicate $(D (a, b) => binaryFun!less(transform(a),
 transform(b))).
  */
-SortedRange!(R, ((a, b) => binaryFun!less(transform(a), transform(b))))
+SortedRange!(R, ((a, b) => binaryFun!less(unaryFun!transform(a),
+                                          unaryFun!transform(b))))
 schwartzSort(alias transform, alias less = "a < b",
         SwapStrategy ss = SwapStrategy.unstable, R)(R r)
     if (isRandomAccessRange!R && hasLength!R)
 {
     import core.stdc.stdlib;
-    alias T = typeof(transform(r.front));
+    alias T = typeof(unaryFun!transform(r.front));
     auto xform1 = (cast(T*) malloc(r.length * T.sizeof))[0 .. r.length];
     size_t length;
     scope(exit)
@@ -9249,7 +9232,7 @@ schwartzSort(alias transform, alias less = "a < b",
     }
     for (; length != r.length; ++length)
     {
-        emplace(xform1.ptr + length, transform(r[length]));
+        emplace(xform1.ptr + length, unaryFun!transform(r[length]));
     }
     // Make sure we use ubyte[] and ushort[], not char[] and wchar[]
     // for the intermediate array, lest zip gets confused.
@@ -9263,6 +9246,13 @@ schwartzSort(alias transform, alias less = "a < b",
     }
     zip(xform, r).sort!((a, b) => binaryFun!less(a[0], b[0]), ss)();
     return typeof(return)(r);
+}
+
+unittest
+{
+    // issue 4909
+    Tuple!(char)[] chars;
+    schwartzSort!"a[0]"(chars);
 }
 
 unittest
@@ -10070,30 +10060,6 @@ unittest
     assert(!all!"a & 1"([1, 2, 3, 5, 7, 9]));
     int x = 1;
     assert(all!(a => a > x)([2, 3]));
-}
-
-// Deprecated. It will be removed in January 2013.  Use std.range.SortedRange.canFind.
-deprecated("Please use std.range.SortedRange.canFind instead.")
-bool canFindSorted(alias pred = "a < b", Range, V)(Range range, V value) {
-    return assumeSorted!pred(range).canFind!V(value);
-}
-
-// Deprecated. It will be removed in January 2013.  Use std.range.SortedRange.lowerBound.
-deprecated("Please use std.range.SortedRange.lowerBound instead.")
-Range lowerBound(alias pred = "a < b", Range, V)(Range range, V value) {
-    return assumeSorted!pred(range).lowerBound!V(value).release;
-}
-
-// Deprecated. It will be removed in January 2013.  Use std.range.SortedRange.upperBound.
-deprecated("Please use std.range.SortedRange.upperBound instead.")
-Range upperBound(alias pred = "a < b", Range, V)(Range range, V value) {
-    return assumeSorted!pred(range).upperBound!V(value).release;
-}
-
-// Deprecated. It will be removed in January 2013.  Use std.range.SortedRange.equalRange.
-deprecated("Please use std.range.SortedRange.equalRange instead.")
-Range equalRange(alias pred = "a < b", Range, V)(Range range, V value) {
-    return assumeSorted!pred(range).equalRange!V(value).release;
 }
 
 /**

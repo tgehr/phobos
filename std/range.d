@@ -233,8 +233,8 @@ $(BOOKTABLE ,
 
 Ranges whose elements are sorted afford better efficiency with certain
 operations. For this, the $(D $(LREF assumeSorted)) function can be used to
-construct a $(D $(LREF SortedRange)) from a pre-sorted _range. The $(D $(LINK2
-std_algorithm.html#sort, std.algorithm.sort)) function also conveniently
+construct a $(D $(LREF SortedRange)) from a pre-sorted _range. The $(LINK2
+std_algorithm.html#sort, $(D std.algorithm.sort)) function also conveniently
 returns a $(D SortedRange). $(D SortedRange) objects provide some additional
 _range operations that take advantage of the fact that the _range is sorted.
 
@@ -3728,10 +3728,7 @@ Take!(Repeat!T) repeat(T)(T value, size_t n)
     return take(repeat(value), n);
 }
 
-/++
-    $(RED Deprecated. It will be removed in January 2013.
-          Please use $(LREF repeat) instead.)
-  +/
+// Explicitly undocumented. It will be removed in November 2013.
 deprecated("Please use std.range.repeat instead.") Take!(Repeat!T) replicate(T)(T value, size_t n)
 {
     return repeat(value, n);
@@ -3832,8 +3829,7 @@ struct Cycle(Range)
 
         auto opSlice(size_t i, size_t j)
         {
-            version (assert)
-                if (i > j) throw new RangeError(text(i, " > ", j));
+            version (assert) if (i > j) throw new RangeError();
             auto retval = this.save;
             retval._index += i;
             return takeExactly(retval, j - i);
@@ -3934,8 +3930,7 @@ struct Cycle(R)
 
     auto opSlice(size_t i, size_t j)
     {
-        version (assert)
-            if (i > j) throw new RangeError(text(i, " > ", j));
+        version (assert) if (i > j) throw new RangeError();
         auto retval = this.save;
         retval._index += i;
         return takeExactly(retval, j - i);
@@ -7686,10 +7681,7 @@ sgi.com/tech/stl/binary_search.html, binary_search).
         return false;
     }
 
-/++
-    $(RED Deprecated. It will be removed in January 2013.
-          Please use $(LREF contains) instead.)
-  +/
+    // Explicitly undocumented. It will be removed in November 2013.
     deprecated("Please use contains instead.") alias contains canFind;
 }
 

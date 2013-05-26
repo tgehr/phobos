@@ -70,6 +70,7 @@ private
     import core.sync.mutex;
     import core.sync.condition;
     import std.algorithm;
+    import std.datetime;
     import std.exception;
     import std.range;
     import std.string;
@@ -776,13 +777,6 @@ unittest
     assert(result == "Unexpected message type: expected 'string', got 'int'");
 }
 
-//Explicitly undocumented. Do not use. To be removed in March 2013.
-deprecated("Please use the overload of receiveTimeout which takes a Duration.")
-bool receiveTimeout(T...)( long ms, T ops )
-{
-    return receiveTimeout( dur!"msecs"( ms ), ops );
-}
-
 /++
     Same as $(D receive) except that rather than wait forever for a message,
     it waits until either it receives a message or the given
@@ -1279,6 +1273,11 @@ private
                 return false;
             }
 
+            static if( timedWait )
+            {
+                auto limit = Clock.currTime( UTC() ) + period;
+            }
+
             while( true )
             {
                 ListT arrived;
@@ -1303,7 +1302,7 @@ private
                             m_notFull.notifyAll();
                         static if( timedWait )
                         {
-                            if( !m_putMsg.wait( period ) )
+                            if( period.isNegative || !m_putMsg.wait( period ) )
                                 return false;
                         }
                         else
@@ -1319,7 +1318,14 @@ private
                     scope(exit) m_localBox.put( arrived );
                     if( scan( arrived ) )
                         return true;
-                    else continue;
+                    else
+                    {
+                        static if( timedWait )
+                        {
+                            period = limit - Clock.currTime( UTC() );
+                        }
+                        continue;
+                    }
                 }
                 m_localBox.put( arrived );
                 pty( m_localPty );
