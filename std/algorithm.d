@@ -961,8 +961,7 @@ unittest
 
 // Pairwise summation http://en.wikipedia.org/wiki/Pairwise_summation
 ElementType!R sum(R)(R r)
-if (isRandomAccessRange!R && hasSlicing!R && hasLength!R
-    && isFloatingPoint!(ElementType!R))
+if (hasSlicing!R && hasLength!R && isFloatingPoint!(ElementType!R))
 {
     switch (r.length)
     {
