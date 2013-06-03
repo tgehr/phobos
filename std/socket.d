@@ -144,13 +144,8 @@ version(unittest)
 /// Base exception thrown by $(D std.socket).
 class SocketException: Exception
 {
-    /**
-     * $(RED Scheduled for deprecation. Please use $(D SocketOSException)
-     * instead.)
-     *
-     * Provided for compatibility with older code using $(D SocketException).
-     */
-    @property int errorCode() const
+    // Explicitly undocumented. It will be removed in November 2013.
+    deprecated("Please use std.socket.SocketOSException instead.") @property int errorCode() const
     {
         auto osException = cast(SocketOSException)this;
         if (osException)
@@ -159,13 +154,25 @@ class SocketException: Exception
             return 0;
     }
 
-    this(string msg)
+    ///
+    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null)
     {
-        super(msg);
+        super(msg, file, line, next);
+    }
+
+    ///
+    this(string msg, Throwable next, string file = __FILE__, size_t line = __LINE__)
+    {
+        super(msg, next, file, line);
     }
 }
 
-private string formatSocketError(int err)
+
+// Needs to be public so that SocketOSException can be thrown outside of
+// std.socket (since it uses it as a default argument), but it probably doesn't
+// need to actually show up in the docs, since there's not really any public
+// need for it outside of being a default argument.
+string formatSocketError(int err)
 {
     version(Posix)
     {
@@ -223,24 +230,58 @@ class SocketOSException: SocketException
 {
     int errorCode;     /// Platform-specific error code.
 
-    this(string msg, int err = _lasterr(),
-        string function(int) errorFormatter = &formatSocketError)
+    ///
+    this(string msg,
+         string file = __FILE__,
+         size_t line = __LINE__,
+         Throwable next = null,
+         int err = _lasterr(),
+         string function(int) errorFormatter = &formatSocketError)
     {
         errorCode = err;
 
         if (msg.length)
-            super(msg ~ ": " ~ errorFormatter(err));
+            super(msg ~ ": " ~ errorFormatter(err), file, line, next);
         else
-            super(errorFormatter(err));
+            super(errorFormatter(err), file, line, next);
+    }
+
+    ///
+    this(string msg,
+         Throwable next,
+         string file = __FILE__,
+         size_t line = __LINE__,
+         int err = _lasterr(),
+         string function(int) errorFormatter = &formatSocketError)
+    {
+        this(msg, file, line, next, err, errorFormatter);
+    }
+
+    ///
+    this(string msg,
+         int err,
+         string function(int) errorFormatter = &formatSocketError,
+         string file = __FILE__,
+         size_t line = __LINE__,
+         Throwable next = null)
+    {
+        this(msg, file, line, next, err, errorFormatter);
     }
 }
 
 /// Socket exceptions representing invalid parameters specified by user code.
 class SocketParameterException: SocketException
 {
-    this(string msg)
+    ///
+    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null)
     {
-        super(msg);
+        super(msg, file, line, next);
+    }
+
+    ///
+    this(string msg, Throwable next, string file = __FILE__, size_t line = __LINE__)
+    {
+        super(msg, next, file, line);
     }
 }
 
@@ -248,9 +289,16 @@ class SocketParameterException: SocketException
 /// available on the current system.
 class SocketFeatureException: SocketException
 {
-    this(string msg)
+    ///
+    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null)
     {
-        super(msg);
+        super(msg, file, line, next);
+    }
+
+    ///
+    this(string msg, Throwable next, string file = __FILE__, size_t line = __LINE__)
+    {
+        super(msg, next, file, line);
     }
 }
 
@@ -570,9 +618,22 @@ unittest
  */
 class HostException: SocketOSException
 {
-    this(string msg, int err = _lasterr())
+    ///
+    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null, int err = _lasterr())
     {
-        super(msg, err);
+        super(msg, file, line, next, err);
+    }
+
+    ///
+    this(string msg, Throwable next, string file = __FILE__, size_t line = __LINE__, int err = _lasterr())
+    {
+        super(msg, next, file, line, err);
+    }
+
+    ///
+    this(string msg, int err, string file = __FILE__, size_t line = __LINE__, Throwable next = null)
+    {
+        super(msg, next, file, line, err);
     }
 }
 
@@ -942,7 +1003,7 @@ private AddressInfo[] getAddressInfoImpl(in char[] node, in char[] service, addr
                 cast(AddressFamily) ai.ai_family,
                 cast(SocketType   ) ai.ai_socktype,
                 cast(ProtocolType ) ai.ai_protocol,
-                new UnknownAddressReference(ai.ai_addr, ai.ai_addrlen),
+                new UnknownAddressReference(ai.ai_addr, cast(socklen_t) ai.ai_addrlen),
                 ai.ai_canonname ? to!string(ai.ai_canonname) : null);
 
         assert(result.length > 0);
@@ -1102,7 +1163,7 @@ unittest
  *         address.toAddrString());
  *     try
  *     {
- *         string reverse = address.toHostNameString());
+ *         string reverse = address.toHostNameString();
  *         if (reverse)
  *             writefln("  Reverse name: %s", reverse);
  *         else
@@ -1168,9 +1229,22 @@ unittest
  */
 class AddressException: SocketOSException
 {
-    this(string msg, int err = _lasterr())
+    ///
+    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null, int err = _lasterr())
     {
-        super(msg, err);
+        super(msg, file, line, next, err);
+    }
+
+    ///
+    this(string msg, Throwable next, string file = __FILE__, size_t line = __LINE__, int err = _lasterr())
+    {
+        super(msg, next, file, line, err);
+    }
+
+    ///
+    this(string msg, int err, string file = __FILE__, size_t line = __LINE__, Throwable next = null)
+    {
+        super(msg, next, file, line, err);
     }
 }
 
@@ -1202,16 +1276,16 @@ class AddressException: SocketOSException
 abstract class Address
 {
     /// Returns pointer to underlying $(D sockaddr) structure.
-    sockaddr* name();
-    abstract const(sockaddr)* name() const; /// ditto
+    abstract @property sockaddr* name();
+    abstract @property const(sockaddr)* name() const; /// ditto
 
     /// Returns actual size of underlying $(D sockaddr) structure.
-    abstract socklen_t nameLen() const;
+    abstract @property socklen_t nameLen() const;
 
     /// Family of this address.
     @property AddressFamily addressFamily() const
     {
-        return cast(AddressFamily) name().sa_family;
+        return cast(AddressFamily) name.sa_family;
     }
 
     // Common code for toAddrString and toHostNameString
@@ -1231,7 +1305,7 @@ abstract class Address
         {
             auto buf = new char[NI_MAXHOST];
             auto ret = getnameinfoPointer(
-                        name(), nameLen(),
+                        name, nameLen,
                         buf.ptr, cast(uint)buf.length,
                         null, 0,
                         numeric ? NI_NUMERICHOST : NI_NAMEREQD);
@@ -1262,7 +1336,7 @@ abstract class Address
         {
             auto buf = new char[NI_MAXSERV];
             enforce(getnameinfoPointer(
-                        name(), nameLen(),
+                        name, nameLen,
                         null, 0,
                         buf.ptr, cast(uint)buf.length,
                         numeric ? NI_NUMERICSERV : NI_NAMEREQD
@@ -1353,18 +1427,18 @@ protected:
 
 
 public:
-    override sockaddr* name()
+    override @property sockaddr* name()
     {
         return &sa;
     }
 
-    override const(sockaddr)* name() const
+    override @property const(sockaddr)* name() const
     {
         return &sa;
     }
 
 
-    override socklen_t nameLen() const
+    override @property socklen_t nameLen() const
     {
         return cast(socklen_t) sa.sizeof;
     }
@@ -1397,18 +1471,18 @@ public:
         this.len = len;
     }
 
-    override sockaddr* name()
+    override @property sockaddr* name()
     {
         return sa;
     }
 
-    override const(sockaddr)* name() const
+    override @property const(sockaddr)* name() const
     {
         return sa;
     }
 
 
-    override socklen_t nameLen() const
+    override @property socklen_t nameLen() const
     {
         return cast(socklen_t) len;
     }
@@ -1434,18 +1508,18 @@ protected:
 
 
 public:
-    override sockaddr* name()
+    override @property sockaddr* name()
     {
         return cast(sockaddr*)&sin;
     }
 
-    override const(sockaddr)* name() const
+    override @property const(sockaddr)* name() const
     {
         return cast(const(sockaddr)*)&sin;
     }
 
 
-    override socklen_t nameLen() const
+    override @property socklen_t nameLen() const
     {
         return cast(socklen_t) sin.sizeof;
     }
@@ -1456,13 +1530,13 @@ public:
     enum ushort PORT_ANY = 0;                /// Any IPv4 port number.
 
     /// Returns the IPv4 _port number (in host byte order).
-    ushort port() const
+    @property ushort port() const
     {
         return ntohs(sin.sin_port);
     }
 
     /// Returns the IPv4 address number (in host byte order).
-    uint addr() const
+    @property uint addr() const
     {
         return ntohl(sin.sin_addr.s_addr);
     }
@@ -1522,7 +1596,7 @@ public:
     /// Human readable string representing the IPv4 port.
     override string toPortString() const
     {
-        return std.conv.to!string(port());
+        return std.conv.to!string(port);
     }
 
     /**
@@ -1643,18 +1717,18 @@ protected:
 
 
 public:
-    override sockaddr* name()
+    override @property sockaddr* name()
     {
         return cast(sockaddr*)&sin6;
     }
 
-    override const(sockaddr)* name() const
+    override @property const(sockaddr)* name() const
     {
         return cast(const(sockaddr)*)&sin6;
     }
 
 
-    override socklen_t nameLen() const
+    override @property socklen_t nameLen() const
     {
         return cast(socklen_t) sin6.sizeof;
     }
@@ -1677,13 +1751,13 @@ public:
     enum ushort PORT_ANY = 0;
 
     /// Returns the IPv6 port number.
-    ushort port() const
+    @property ushort port() const
     {
         return ntohs(sin6.sin6_port);
     }
 
     /// Returns the IPv6 address.
-    ubyte[16] addr() const
+    @property ubyte[16] addr() const
     {
         return sin6.sin6_addr.s6_addr;
     }
@@ -1699,7 +1773,7 @@ public:
     {
         auto results = getAddressInfo(node, service, AddressFamily.INET6);
         assert(results.length && results[0].family == AddressFamily.INET6);
-        sin6 = *cast(sockaddr_in6*)results[0].address.name();
+        sin6 = *cast(sockaddr_in6*)results[0].address.name;
     }
 
     /**
@@ -1751,7 +1825,7 @@ public:
         // instead.
         auto results = getAddressInfo(addr, AddressInfoFlags.NUMERICHOST);
         if (results.length && results[0].family == AddressFamily.INET6)
-            return (cast(sockaddr_in6*)results[0].address.name()).sin6_addr.s6_addr;
+            return (cast(sockaddr_in6*)results[0].address.name).sin6_addr.s6_addr;
         throw new AddressException("Not an IPv6 address", 0);
     }
 }
@@ -1800,18 +1874,18 @@ static if (is(sockaddr_un))
 
 
     public:
-        override sockaddr* name()
+        override @property sockaddr* name()
         {
             return cast(sockaddr*)sun;
         }
 
-        override const(sockaddr)* name() const
+        override @property const(sockaddr)* name() const
         {
             return cast(const(sockaddr)*)sun;
         }
 
 
-        override socklen_t nameLen() const
+        override @property socklen_t nameLen() const
         {
             return len;
         }
@@ -1844,9 +1918,22 @@ static if (is(sockaddr_un))
  */
 class SocketAcceptException: SocketOSException
 {
-    this(string msg, int err = _lasterr())
+    ///
+    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null, int err = _lasterr())
     {
-        super(msg, err);
+        super(msg, file, line, next, err);
+    }
+
+    ///
+    this(string msg, Throwable next, string file = __FILE__, size_t line = __LINE__, int err = _lasterr())
+    {
+        super(msg, next, file, line, err);
+    }
+
+    ///
+    this(string msg, int err, string file = __FILE__, size_t line = __LINE__, Throwable next = null)
+    {
+        super(msg, next, file, line, err);
     }
 }
 
@@ -1904,18 +1991,11 @@ struct TimeVal
         // D interface
         mixin FieldProxy!(`ctimeval.tv_sec`, `seconds`);
         mixin FieldProxy!(`ctimeval.tv_usec`, `microseconds`);
-
-        // C interface
-        deprecated
-        {
-            alias seconds tv_sec;
-            alias microseconds tv_usec;
-        }
     }
 }
 
-/// $(RED Scheduled for deprecation. Please use $(D TimeVal) instead.)
-alias TimeVal timeval;
+// Explicitly undocumented. It will be removed in November 2013.
+deprecated("Please use std.socket.TimeVal instead.") alias TimeVal timeval;
 
 
 /**
@@ -2139,18 +2219,11 @@ struct Linger
         // D interface
         mixin FieldProxy!(`clinger.l_onoff`, `on`);
         mixin FieldProxy!(`clinger.l_linger`, `time`);
-
-        // C interface
-        deprecated
-        {
-            alias on l_onoff;
-            alias time l_linger;
-        }
     }
 }
 
-/// $(RED Scheduled for deprecation. Please use $(D Linger) instead.)
-alias Linger linger;
+// Explicitly undocumented. It will be removed in November 2013.
+deprecated("Please use std.socket.Linger instead.") alias Linger linger;
 
 /// Specifies a socket option:
 enum SocketOption: int
@@ -2383,7 +2456,7 @@ public:
     /// Associate a local address with this socket.
     void bind(Address addr)
     {
-        if(_SOCKET_ERROR == .bind(sock, addr.name(), addr.nameLen()))
+        if(_SOCKET_ERROR == .bind(sock, addr.name, addr.nameLen))
             throw new SocketOSException("Unable to bind socket");
     }
 
@@ -2394,7 +2467,7 @@ public:
      */
     void connect(Address to)
     {
-        if(_SOCKET_ERROR == .connect(sock, to.name(), to.nameLen()))
+        if(_SOCKET_ERROR == .connect(sock, to.name, to.nameLen))
         {
             int err;
             err = _lasterr();
@@ -2513,7 +2586,7 @@ public:
 
     /// Returns the local machine's host name.
     // Idea from mango.
-    static string hostName()     // getter
+    static @property string hostName()     // getter
     {
         char[256] result;         // Host names are limited to 255 chars.
         if(_SOCKET_ERROR == .gethostname(result.ptr, result.length))
@@ -2522,28 +2595,28 @@ public:
     }
 
     /// Remote endpoint $(D Address).
-    Address remoteAddress()
+    @property Address remoteAddress()
     {
         Address addr = createAddress();
-        socklen_t nameLen = addr.nameLen();
-        if(_SOCKET_ERROR == .getpeername(sock, addr.name(), &nameLen))
+        socklen_t nameLen = addr.nameLen;
+        if(_SOCKET_ERROR == .getpeername(sock, addr.name, &nameLen))
             throw new SocketOSException("Unable to obtain remote socket address");
-        if(nameLen > addr.nameLen())
+        if(nameLen > addr.nameLen)
             throw new SocketParameterException("Not enough socket address storage");
-        assert(addr.addressFamily() == _family);
+        assert(addr.addressFamily == _family);
         return addr;
     }
 
     /// Local endpoint $(D Address).
-    Address localAddress()
+    @property Address localAddress()
     {
         Address addr = createAddress();
-        socklen_t nameLen = addr.nameLen();
-        if(_SOCKET_ERROR == .getsockname(sock, addr.name(), &nameLen))
+        socklen_t nameLen = addr.nameLen;
+        if(_SOCKET_ERROR == .getsockname(sock, addr.name, &nameLen))
             throw new SocketOSException("Unable to obtain local socket address");
-        if(nameLen > addr.nameLen())
+        if(nameLen > addr.nameLen)
             throw new SocketParameterException("Not enough socket address storage");
-        assert(addr.addressFamily() == _family);
+        assert(addr.addressFamily == _family);
         return addr;
     }
 
@@ -2596,10 +2669,10 @@ public:
         version( Windows )
             return .sendto(
                        sock, buf.ptr, std.conv.to!int(buf.length),
-                       cast(int)flags, to.name(), to.nameLen()
+                       cast(int)flags, to.name, to.nameLen
                        );
         else
-            return .sendto(sock, buf.ptr, buf.length, cast(int)flags, to.name(), to.nameLen());
+            return .sendto(sock, buf.ptr, buf.length, cast(int)flags, to.name, to.nameLen);
     }
 
     /// ditto
@@ -2672,16 +2745,16 @@ public:
             return 0;
         if (from is null || from.addressFamily != _family)
             from = createAddress();
-        socklen_t nameLen = from.nameLen();
+        socklen_t nameLen = from.nameLen;
         version(Windows)
         {
-            auto read = .recvfrom(sock, buf.ptr, to!int(buf.length), cast(int)flags, from.name(), &nameLen);
-            assert(from.addressFamily() == _family);
+            auto read = .recvfrom(sock, buf.ptr, to!int(buf.length), cast(int)flags, from.name, &nameLen);
+            assert(from.addressFamily == _family);
             // if(!read) //connection closed
             return read;
         } else {
-            auto read = .recvfrom(sock, buf.ptr, buf.length, cast(int)flags, from.name(), &nameLen);
-            assert(from.addressFamily() == _family);
+            auto read = .recvfrom(sock, buf.ptr, buf.length, cast(int)flags, from.name, &nameLen);
+            assert(from.addressFamily == _family);
             // if(!read) //connection closed
             return read;
         }
@@ -2844,7 +2917,7 @@ public:
 
         version (Windows)
         {
-            auto msecs = to!int(value.total!"msecs"());
+            auto msecs = to!int(value.total!"msecs");
             if (msecs != 0 && option == SocketOption.RCVTIMEO)
                 msecs = max(1, msecs - WINSOCK_TIMEOUT_SKEW);
             setOption(level, option, msecs);
@@ -2909,11 +2982,10 @@ public:
     }
 
     /**
-     * Wait for a socket to change status. A wait timeout $(D TimeVal),
-     * $(D Duration) or $(D long) microseconds may be specified; if a timeout
-     * is not specified or the $(D TimeVal) is $(D null), the maximum timeout
-     * is used. The $(D TimeVal) timeout has an unspecified value when
-     * $(D select) returns.
+     * Wait for a socket to change status. A wait timeout of $(Duration) or
+     * $(D TimeVal), may be specified; if a timeout is not specified or the
+     * $(D TimeVal) is $(D null), the maximum timeout is used. The $(D TimeVal)
+     * timeout has an unspecified value when $(D select) returns.
      * Returns: The number of sockets with status changes, $(D 0) on timeout,
      * or $(D -1) on interruption. If the return value is greater than $(D 0),
      * the $(D SocketSets) are updated to only contain the sockets having status
@@ -2927,7 +2999,23 @@ public:
     //for a connect()ing socket, writeability means connected
     //for a listen()ing socket, readability means listening
     //Winsock: possibly internally limited to 64 sockets per set
-    static int select(SocketSet checkRead, SocketSet checkWrite, SocketSet checkError, TimeVal* tv)
+    static int select(SocketSet checkRead, SocketSet checkWrite, SocketSet checkError, Duration timeout)
+    {
+        TimeVal tv;
+        tv.seconds      = to!(tv.tv_sec_t )(timeout.total!"seconds");
+        tv.microseconds = to!(tv.tv_usec_t)(timeout.fracSec.usecs);
+        return select(checkRead, checkWrite, checkError, &tv);
+    }
+
+    /// ditto
+    //maximum timeout
+    static int select(SocketSet checkRead, SocketSet checkWrite, SocketSet checkError)
+    {
+        return select(checkRead, checkWrite, checkError, null);
+    }
+
+    /// Ditto
+    static int select(SocketSet checkRead, SocketSet checkWrite, SocketSet checkError, TimeVal* timeout)
     in
     {
         //make sure none of the SocketSet's are the same object
@@ -2949,9 +3037,9 @@ public:
         version(Windows)
         {
             // Windows has a problem with empty fd_set`s that aren't null.
-            fr = (checkRead && checkRead.count()) ? checkRead.toFd_set() : null;
-            fw = (checkWrite && checkWrite.count()) ? checkWrite.toFd_set() : null;
-            fe = (checkError && checkError.count()) ? checkError.toFd_set() : null;
+            fr = checkRead  && checkRead.count  ? checkRead.toFd_set()  : null;
+            fw = checkWrite && checkWrite.count ? checkWrite.toFd_set() : null;
+            fe = checkError && checkError.count ? checkError.toFd_set() : null;
         }
         else
         {
@@ -2992,7 +3080,7 @@ public:
             }
         }
 
-        int result = .select(n, fr, fw, fe, &tv.ctimeval);
+        int result = .select(n, fr, fw, fe, &timeout.ctimeval);
 
         version(Windows)
         {
@@ -3015,32 +3103,15 @@ public:
         return result;
     }
 
-
-    /// ditto
+    // This overload is explicitly not documented. Please do not use it. It will
+    // likely be deprecated in the future. It is against Phobos policy to have
+    // functions which use naked numbers for time values.
     static int select(SocketSet checkRead, SocketSet checkWrite, SocketSet checkError, long microseconds)
     {
         TimeVal tv;
         tv.seconds      = to!(tv.tv_sec_t )(microseconds / 1_000_000);
         tv.microseconds = to!(tv.tv_usec_t)(microseconds % 1_000_000);
         return select(checkRead, checkWrite, checkError, &tv);
-    }
-
-
-    /// ditto
-    static int select(SocketSet checkRead, SocketSet checkWrite, SocketSet checkError, Duration duration)
-    {
-        TimeVal tv;
-        tv.seconds      = to!(tv.tv_sec_t )(duration.total!"seconds"());
-        tv.microseconds = to!(tv.tv_usec_t)(duration.fracSec.usecs);
-        return select(checkRead, checkWrite, checkError, &tv);
-    }
-
-
-    /// ditto
-    //maximum timeout
-    static int select(SocketSet checkRead, SocketSet checkWrite, SocketSet checkError)
-    {
-        return select(checkRead, checkWrite, checkError, null);
     }
 
 
@@ -3088,7 +3159,7 @@ class TcpSocket: Socket
     /// Constructs a blocking TCP Socket and connects to an $(D Address).
     this(Address connectTo)
     {
-        this(connectTo.addressFamily());
+        this(connectTo.addressFamily);
         connect(connectTo);
     }
 }
@@ -3158,7 +3229,7 @@ Socket[2] socketPair()
         auto listener = new TcpSocket();
         listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
         listener.bind(new InternetAddress(INADDR_LOOPBACK, InternetAddress.PORT_ANY));
-        auto addr = listener.localAddress();
+        auto addr = listener.localAddress;
         listener.listen(1);
 
         result[0] = new TcpSocket(addr);
