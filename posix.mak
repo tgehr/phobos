@@ -22,49 +22,54 @@
 # OS can be linux, win32, win32remote, win32wine, osx, or freebsd. If left
 # blank, the system will be determined by using uname
 
+QUIET:=@
+
+OS:=
+uname_S:=$(shell uname -s)
+ifeq (Darwin,$(uname_S))
+	OS:=osx
+endif
+ifeq (Linux,$(uname_S))
+	OS:=linux
+endif
+ifeq (FreeBSD,$(uname_S))
+	OS:=freebsd
+endif
+ifeq (OpenBSD,$(uname_S))
+	OS:=openbsd
+endif
+ifeq (Solaris,$(uname_S))
+	OS:=solaris
+endif
+ifeq (SunOS,$(uname_S))
+	OS:=solaris
+endif
 ifeq (,$(OS))
-    OS:=$(shell uname)
-    ifeq (Darwin,$(OS))
-        OS:=osx
-    else
-        ifeq (Linux,$(OS))
-            OS:=linux
-        else
-            ifeq (FreeBSD,$(OS))
-                OS:=freebsd
-            else
-                $(error Unrecognized or unsupported OS for uname: $(OS))
-            endif
-        endif
-    endif
+	$(error Unrecognized or unsupported OS for uname: $(uname_S))
 endif
 
-# For now, 32 bit is the default model
-ifeq (,$(MODEL))
-	MODEL:=32
+MODEL:=default
+ifneq (default,$(MODEL))
+      MODEL_FLAG:=-m$(MODEL)
 endif
+
+override PIC:=$(if $(PIC),-fPIC,)
 
 # Configurable stuff that's rarely edited
+INSTALL_DIR = ../install
 DRUNTIME_PATH = ../druntime
 ZIPFILE = phobos.zip
 ROOT_OF_THEM_ALL = generated
 ROOT = $(ROOT_OF_THEM_ALL)/$(OS)/$(BUILD)/$(MODEL)
 # Documentation-related stuff
-DOCSRC = ../d-programming-language.org
+DOCSRC = ../dlang.org
 WEBSITE_DIR = ../web
 DOC_OUTPUT_DIR = $(WEBSITE_DIR)/phobos-prerelease
 BIGDOC_OUTPUT_DIR = /tmp
-SRC_DOCUMENTABLES = index.d $(addsuffix .d,$(STD_MODULES) $(STD_NET_MODULES) $(EXTRA_DOCUMENTABLES))
+SRC_DOCUMENTABLES = index.d $(addsuffix .d,$(STD_MODULES) $(STD_NET_MODULES) $(STD_DIGEST_MODULES) $(EXTRA_DOCUMENTABLES))
 STDDOC = $(DOCSRC)/std.ddoc
 BIGSTDDOC = $(DOCSRC)/std_consolidated.ddoc
-DDOCFLAGS=-m$(MODEL) -d -c -o- -version=StdDdoc -I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS)
-
-# Variable defined in an OS-dependent manner (see below)
-CC =
-DMD =
-DDOC =
-CFLAGS =
-DFLAGS =
+DDOCFLAGS=$(MODEL_FLAG) -d -c -o- -version=StdDdoc -I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS)
 
 # BUILD can be debug or release, but is unset by default; recursive
 # invocation will set it. See the debug and release targets below.
@@ -76,6 +81,7 @@ MAKEFILE:=$(lastword $(MAKEFILE_LIST))
 # Set DRUNTIME name and full path
 ifeq (,$(findstring win,$(OS)))
 	DRUNTIME = $(DRUNTIME_PATH)/lib/libdruntime-$(OS)$(MODEL).a
+	DRUNTIMESO = $(DRUNTIME_PATH)/lib/libdruntime-$(OS)$(MODEL)so.a
 else
 	DRUNTIME = $(DRUNTIME_PATH)/lib/druntime.lib
 endif
@@ -83,14 +89,14 @@ endif
 # Set CC and DMD
 ifeq ($(OS),win32wine)
 	CC = wine dmc.exe
-	DMD = wine dmd.exe
+	DMD ?= wine dmd.exe
 	RUN = wine
 else
 	ifeq ($(OS),win32remote)
-		DMD = ssh 206.125.170.138 "cd code/dmd/phobos && dmd"
+		DMD ?= ssh 206.125.170.138 "cd code/dmd/phobos && dmd"
 		CC = ssh 206.125.170.138 "cd code/dmd/phobos && dmc"
 	else
-		DMD = dmd
+		DMD ?= dmd
 		ifeq ($(OS),win32)
 			CC = dmc
 		else
@@ -101,8 +107,9 @@ else
 endif
 
 # Set CFLAGS
-ifeq ($(CC),cc)
-	CFLAGS += -m$(MODEL)
+CFLAGS :=
+ifneq (,$(filter cc% gcc% clang% icc% egcc%, $(CC)))
+	CFLAGS += $(MODEL_FLAG) $(PIC)
 	ifeq ($(BUILD),debug)
 		CFLAGS += -g
 	else
@@ -111,11 +118,11 @@ ifeq ($(CC),cc)
 endif
 
 # Set DFLAGS
-DFLAGS := -I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS) -w -d -property -m$(MODEL)
+DFLAGS := -I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS) -w -d -property $(MODEL_FLAG) $(PIC)
 ifeq ($(BUILD),debug)
 	DFLAGS += -g -debug
 else
-	DFLAGS += -O -release -nofloat
+	DFLAGS += -O -release
 endif
 
 # Set DOTOBJ and DOTEXE
@@ -143,9 +150,17 @@ endif
 # Set DDOC, the documentation generator
 DDOC=$(DMD)
 
+# Set VERSION, where the file is that contains the version string
+VERSION=../dmd/VERSION
+
+# Set SONAME, the name of the shared library.
+# The awk script will produce the last 2 digits of the version string, i.e. 2.063 produces 63
+SONAME = libphobos2.so.0.$(shell awk -F. '{ print $$NF + 0 }' $(VERSION))
+
 # Set LIB, the ultimate target
 ifeq (,$(findstring win,$(OS)))
 	LIB = $(ROOT)/libphobos2.a
+	LIBSO = $(ROOT)/$(SONAME).0
 else
 	LIB = $(ROOT)/phobos.lib
 endif
@@ -155,15 +170,17 @@ MAIN = $(ROOT)/emptymain.d
 
 # Stuff in std/
 STD_MODULES = $(addprefix std/, algorithm array ascii base64 bigint		\
-        bitmanip compiler complex concurrency container contracts conv	\
-        cpuid cstream ctype csv datetime demangle encoding exception	\
-        file format functional getopt json loader math mathspecial md5	\
-        metastrings mmfile numeric outbuffer parallelism path perf		\
-        process random range regex regexp signals socket socketstream	\
+        bitmanip compiler complex concurrency container conv		\
+        cstream csv datetime demangle encoding exception	\
+        file format functional getopt json math mathspecial md5	\
+        metastrings mmfile numeric outbuffer parallelism path		\
+        process random range regex signals socket socketstream	\
         stdint stdio stdiobase stream string syserror system traits		\
-        typecons typetuple uni uri utf variant xml zip zlib)
+        typecons typetuple uni uri utf uuid variant xml zip zlib)
 
 STD_NET_MODULES = $(addprefix std/net/, isemail curl)
+
+STD_DIGEST_MODULES = $(addprefix std/digest/, digest crc md ripemd sha)
 
 # OS-specific D modules
 EXTRA_MODULES_LINUX := $(addprefix std/c/linux/, linux socket)
@@ -182,18 +199,19 @@ EXTRA_DOCUMENTABLES += $(addprefix etc/c/,curl sqlite3 zlib) $(addprefix	\
 std/c/, fenv locale math process stdarg stddef stdio stdlib string	\
 time wcharh)
 EXTRA_MODULES += $(EXTRA_DOCUMENTABLES) $(addprefix			\
+	std/internal/digest/, sha_SSSE3 ) $(addprefix \
 	std/internal/math/, biguintcore biguintnoasm biguintx86	\
 	gammafunction errorfunction) $(addprefix std/internal/, \
 	processinit uni uni_tab)
 
 # Aggregate all D modules relevant to this build
-D_MODULES = crc32 $(STD_MODULES) $(EXTRA_MODULES) $(STD_NET_MODULES)
+D_MODULES = crc32 $(STD_MODULES) $(EXTRA_MODULES) $(STD_NET_MODULES) $(STD_DIGEST_MODULES)
 # Add the .d suffix to the module names
 D_FILES = $(addsuffix .d,$(D_MODULES))
 # Aggregate all D modules over all OSs (this is for the zip file)
 ALL_D_FILES = $(addsuffix .d, $(D_MODULES) \
 $(EXTRA_MODULES_LINUX) $(EXTRA_MODULES_OSX) $(EXTRA_MODULES_FREEBSD) $(EXTRA_MODULES_WIN32)) \
-	std/stdarg.d std/bind.d std/internal/windows/advapi32.d \
+	std/internal/windows/advapi32.d \
 	std/windows/registry.d std/c/linux/pthread.d std/c/linux/termios.d \
 	std/c/linux/tipc.d std/net/isemail.d std/net/curl.d
 
@@ -205,6 +223,7 @@ C_FILES = $(addsuffix .c,$(C_MODULES))
 C_EXTRAS = $(addprefix etc/c/zlib/, algorithm.txt ChangeLog crc32.h	\
 deflate.h example.c inffast.h inffixed.h inflate.h inftrees.h		\
 linux.mak minigzip.c osx.mak README trees.h win32.mak zconf.h		\
+win64.mak \
 gzguts.h zlib.3 zlib.h zutil.h)
 # Aggregate all C files over all OSs (this is for the zip file)
 ALL_C_FILES = $(C_FILES) $(C_EXTRAS)
@@ -220,13 +239,21 @@ ifeq ($(BUILD),)
 # targets. BUILD is not defined in user runs, only by recursive
 # self-invocations. So the targets in this branch are accessible to
 # end users.
+ifeq (linux,$(OS))
+release :
+	$(MAKE) --no-print-directory -f $(MAKEFILE) OS=$(OS) MODEL=$(MODEL) BUILD=release PIC=1 dll
+	$(MAKE) --no-print-directory -f $(MAKEFILE) OS=$(OS) MODEL=$(MODEL) BUILD=release
+else
 release :
 	$(MAKE) --no-print-directory -f $(MAKEFILE) OS=$(OS) MODEL=$(MODEL) BUILD=release
+endif
 debug :
 	$(MAKE) --no-print-directory -f $(MAKEFILE) OS=$(OS) MODEL=$(MODEL) BUILD=debug
 unittest :
 	$(MAKE) --no-print-directory -f $(MAKEFILE) OS=$(OS) MODEL=$(MODEL) BUILD=debug unittest
 	$(MAKE) --no-print-directory -f $(MAKEFILE) OS=$(OS) MODEL=$(MODEL) BUILD=release unittest
+install :
+	$(MAKE) --no-print-directory -f $(MAKEFILE) OS=$(OS) MODEL=$(MODEL) BUILD=release INSTALL_DIR=$(INSTALL_DIR) DMD=$(DMD) install2
 else
 # This branch is normally taken in recursive builds. All we need to do
 # is set the default build to $(BUILD) (which is either debug or
@@ -244,6 +271,17 @@ $(ROOT)/%$(DOTOBJ) : %.c
 $(LIB) : $(OBJS) $(ALL_D_FILES) $(DRUNTIME)
 	$(DMD) $(DFLAGS) -lib -of$@ $(DRUNTIME) $(D_FILES) $(OBJS)
 
+dll : $(ROOT)/libphobos2.so
+
+$(ROOT)/libphobos2.so: $(ROOT)/$(SONAME)
+	ln -sf $(notdir $(LIBSO)) $@ 
+
+$(ROOT)/$(SONAME): $(LIBSO)
+	ln -sf $(notdir $(LIBSO)) $@
+
+$(LIBSO): $(OBJS) $(ALL_D_FILES) $(DRUNTIME)
+	$(DMD) $(DFLAGS) -shared -debuglib= -defaultlib= -of$@ -L-soname=$(SONAME) $(DRUNTIMESO) $(D_FILES) $(OBJS)
+
 ifeq (osx,$(OS))
 # Build fat library that combines the 32 bit and the 64 bit libraries
 libphobos2.a : generated/osx/release/32/libphobos2.a generated/osx/release/64/libphobos2.a
@@ -255,12 +293,12 @@ $(addprefix $(ROOT)/unittest/,$(DISABLED_TESTS)) :
 
 $(ROOT)/unittest/%$(DOTEXE) : %.d $(LIB) $(ROOT)/emptymain.d
 	@echo Testing $@
-	@$(DMD) $(DFLAGS) -unittest $(LINKOPTS) $(subst /,$(PATHSEP),"-of$@") \
+	$(QUIET)$(DMD) $(DFLAGS) -unittest $(LINKOPTS) $(subst /,$(PATHSEP),"-of$@") \
 	 	$(ROOT)/emptymain.d $<
 # make the file very old so it builds and runs again if it fails
 	@touch -t 197001230123 $@
 # run unittest in its own directory
-	@$(RUN) $@
+	$(QUIET)$(RUN) $@
 # succeeded, render the file new again
 	@touch $@
 
@@ -278,10 +316,17 @@ clean :
 	rm -rf $(ROOT_OF_THEM_ALL) $(ZIPFILE) $(DOC_OUTPUT_DIR)
 
 zip :
-	zip $(ZIPFILE) $(MAKEFILE) $(ALL_D_FILES) $(ALL_C_FILES)
+	zip $(ZIPFILE) $(MAKEFILE) $(ALL_D_FILES) $(ALL_C_FILES) win32.mak win64.mak
 
-install : release
-	sudo cp $(LIB) /usr/lib/
+install2 : release
+	mkdir -p $(INSTALL_DIR)/lib
+	cp $(LIB) $(INSTALL_DIR)/lib/
+	mkdir -p $(INSTALL_DIR)/import/etc
+	mkdir -p $(INSTALL_DIR)/import/std
+	cp crc32.d $(INSTALL_DIR)/import/
+	cp -r std/* $(INSTALL_DIR)/import/std/
+	cp -r etc/* $(INSTALL_DIR)/import/etc/
+	cp LICENSE_1_0.txt $(INSTALL_DIR)/phobos-LICENSE.txt
 
 $(DRUNTIME) :
 	$(MAKE) -C $(DRUNTIME_PATH) -f posix.mak MODEL=$(MODEL)
@@ -310,6 +355,9 @@ $(DOC_OUTPUT_DIR)/std_c_windows_%.html : std/c/windows/%.d $(STDDOC)
 	$(DDOC) $(DDOCFLAGS) -Df$@ $<
 
 $(DOC_OUTPUT_DIR)/std_net_%.html : std/net/%.d $(STDDOC)
+	$(DDOC) $(DDOCFLAGS)  $(STDDOC) -Df$@ $<
+
+$(DOC_OUTPUT_DIR)/std_digest_%.html : std/digest/%.d $(STDDOC)
 	$(DDOC) $(DDOCFLAGS)  $(STDDOC) -Df$@ $<
 
 $(DOC_OUTPUT_DIR)/etc_c_%.html : etc/c/%.d $(STDDOC)

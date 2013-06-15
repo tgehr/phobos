@@ -8,6 +8,10 @@
  * type tuple. TL[$(I lwr) .. $(I upr)] returns a new type
  * list that is a slice of the old one.
  *
+ * Several templates in this module use or operate on eponymous templates that
+ * take a single argument and evaluate to a boolean constant. Such templates
+ * are referred to as $(I template predicates).
+ *
  * References:
  *  Based on ideas in Table 3.1 from
  *  $(LINK2 http://amazon.com/exec/obidos/ASIN/0201704315/ref=ase_classicempire/102-2957199-2585768,
@@ -18,7 +22,9 @@
  *
  * Copyright: Copyright Digital Mars 2005 - 2009.
  * License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
- * Authors:   $(WEB digitalmars.com, Walter Bright)
+ * Authors:
+ *     $(WEB digitalmars.com, Walter Bright),
+ *     $(WEB klickverbot.at, David Nadlinger)
  * Source:    $(PHOBOSSRC std/_typetuple.d)
  */
 /*          Copyright Digital Mars 2005 - 2009.
@@ -32,45 +38,37 @@ import std.traits;
 
 /**
  * Creates a typetuple out of a sequence of zero or more types.
- * Example:
- * ---
- * import std.typetuple;
- * alias TypeTuple!(int, double) TL;
- *
- * int foo(TL td)  // same as int foo(int, double);
- * {
- *    return td[0] + cast(int)td[1];
- * }
- * ---
- *
- * Example:
- * ---
- * TypeTuple!(TL, char)
- * // is equivalent to:
- * TypeTuple!(int, double, char)
- * ---
  */
 template TypeTuple(TList...)
 {
     alias TList TypeTuple;
 }
 
+///
+unittest
+{
+    import std.typetuple;
+    alias TL = TypeTuple!(int, double);
+
+    int foo(TL td)  // same as int foo(int, double);
+    {
+        return td[0] + cast(int)td[1];
+    }
+}
+
+///
+unittest
+{
+    alias TL = TypeTuple!(int, double);
+
+    alias Types = TypeTuple!(TL, char);
+    static assert(is(Types == TypeTuple!(int, double, char)));
+}
+
 /**
  * Returns the index of the first occurrence of type T in the
  * sequence of zero or more types TList.
  * If not found, -1 is returned.
- * Example:
- * ---
- * import std.typetuple;
- * import std.stdio;
- *
- * void foo()
- * {
- *    writefln("The index of long is %s",
- *          staticIndexOf!(long, TypeTuple!(int, long, double)));
- *    // prints: The index of long is 1
- * }
- * ---
  */
 template staticIndexOf(T, TList...)
 {
@@ -81,6 +79,20 @@ template staticIndexOf(T, TList...)
 template staticIndexOf(alias T, TList...)
 {
     enum staticIndexOf = genericIndexOf!(T, TList).index;
+}
+
+///
+unittest
+{
+    import std.typetuple;
+    import std.stdio;
+
+    void foo()
+    {
+        writefln("The index of long is %s",
+                 staticIndexOf!(long, TypeTuple!(int, long, double)));
+        // prints: The index of long is 1
+    }
 }
 
 // [internal]
@@ -139,24 +151,9 @@ alias staticIndexOf IndexOf;
 /**
  * Returns a typetuple created from TList with the first occurrence,
  * if any, of T removed.
- * Example:
- * ---
- * Erase!(long, int, long, double, char)
- * // is the same as:
- * TypeTuple!(int, double, char)
- * ---
  */
-// template Erase(T, TList...)
-// {
-//     static if (TList.length == 0)
-//  alias TList Erase;
-//     else static if (is(T == TList[0]))
-//  alias TList[1 .. $] Erase;
-//     else
-//  alias TypeTuple!(TList[0], Erase!(T, TList[1 .. $])) Erase;
-// }
- template Erase(T, TList...)
- {
+template Erase(T, TList...)
+{
     alias GenericErase!(T, TList).result Erase;
 }
 
@@ -164,6 +161,14 @@ alias staticIndexOf IndexOf;
 template Erase(alias T, TList...)
 {
     alias GenericErase!(T, TList).result Erase;
+}
+
+///
+unittest
+{
+    alias Types = TypeTuple!(int, long, double, char);
+    alias TL = Erase!(long, Types);
+    static assert(is(TL == TypeTuple!(int, double, char)));
 }
 
 // [internal]
@@ -183,11 +188,11 @@ private template GenericErase(args...)
         else
             alias TypeTuple!(head, GenericErase!(e, tail).result) result;
     }
-     else
+    else
     {
         alias TypeTuple!() result;
     }
- }
+}
 
 unittest
 {
@@ -204,14 +209,6 @@ unittest
 /**
  * Returns a typetuple created from TList with the all occurrences,
  * if any, of T removed.
- * Example:
- * ---
- * alias TypeTuple!(int, long, long, int) TL;
- *
- * EraseAll!(long, TL)
- * // is the same as:
- * TypeTuple!(int, int)
- * ---
  */
 template EraseAll(T, TList...)
 {
@@ -222,6 +219,15 @@ template EraseAll(T, TList...)
 template EraseAll(alias T, TList...)
 {
     alias GenericEraseAll!(T, TList).result EraseAll;
+}
+
+///
+unittest
+{
+    alias Types = TypeTuple!(int, long, long, int);
+
+    alias TL = EraseAll!(long, Types);
+    static assert(is(TL == TypeTuple!(int, int)));
 }
 
 // [internal]
@@ -242,11 +248,11 @@ private template GenericEraseAll(args...)
         else
             alias TypeTuple!(head, next) result;
     }
-     else
+    else
     {
         alias TypeTuple!() result;
     }
- }
+}
 
 unittest
 {
@@ -263,14 +269,6 @@ unittest
 /**
  * Returns a typetuple created from TList with the all duplicate
  * types removed.
- * Example:
- * ---
- * alias TypeTuple!(int, long, long, int, float) TL;
- *
- * NoDuplicates!(TL)
- * // is the same as:
- * TypeTuple!(int, long, float)
- * ---
  */
 template NoDuplicates(TList...)
 {
@@ -278,6 +276,15 @@ template NoDuplicates(TList...)
     alias TList NoDuplicates;
     else
     alias TypeTuple!(TList[0], NoDuplicates!(EraseAll!(TList[0], TList[1 .. $]))) NoDuplicates;
+}
+
+///
+unittest
+{
+    alias Types = TypeTuple!(int, long, long, int, float);
+
+    alias TL = NoDuplicates!(Types);
+    static assert(is(TL == TypeTuple!(int, long, float)));
 }
 
 unittest
@@ -292,14 +299,6 @@ unittest
 /**
  * Returns a typetuple created from TList with the first occurrence
  * of type T, if found, replaced with type U.
- * Example:
- * ---
- * alias TypeTuple!(int, long, long, int, float) TL;
- *
- * Replace!(long, char, TL)
- * // is the same as:
- * TypeTuple!(int, char, long, int, float)
- * ---
  */
 template Replace(T, U, TList...)
 {
@@ -324,6 +323,15 @@ template Replace(alias T, alias U, TList...)
     alias GenericReplace!(T, U, TList).result Replace;
 }
 
+///
+unittest
+{
+    alias Types = TypeTuple!(int, long, long, int, float);
+
+    alias TL = Replace!(long, char, Types);
+    static assert(is(TL == TypeTuple!(int, char, long, int, float)));
+}
+
 // [internal]
 private template GenericReplace(args...)
     if (args.length >= 2)
@@ -343,7 +351,7 @@ private template GenericReplace(args...)
             alias TypeTuple!(head,
                 GenericReplace!(from, to, tail).result) result;
     }
-     else
+    else
     {
         alias TypeTuple!() result;
     }
@@ -371,14 +379,6 @@ unittest
 /**
  * Returns a typetuple created from TList with all occurrences
  * of type T, if found, replaced with type U.
- * Example:
- * ---
- * alias TypeTuple!(int, long, long, int, float) TL;
- *
- * ReplaceAll!(long, char, TL)
- * // is the same as:
- * TypeTuple!(int, char, char, int, float)
- * ---
  */
 template ReplaceAll(T, U, TList...)
 {
@@ -401,6 +401,15 @@ template ReplaceAll(T, alias U, TList...)
 template ReplaceAll(alias T, alias U, TList...)
 {
     alias GenericReplaceAll!(T, U, TList).result ReplaceAll;
+}
+
+///
+unittest
+{
+    alias Types = TypeTuple!(int, long, long, int, float);
+
+    alias TL = ReplaceAll!(long, char, Types);
+    static assert(is(TL == TypeTuple!(int, char, char, int, float)));
 }
 
 // [internal]
@@ -449,35 +458,34 @@ unittest
 
 /**
  * Returns a typetuple created from TList with the order reversed.
- * Example:
- * ---
- * alias TypeTuple!(int, long, long, int, float) TL;
- *
- * Reverse!(TL)
- * // is the same as:
- * TypeTuple!(float, int, long, long, int)
- * ---
  */
 template Reverse(TList...)
 {
-    static if (TList.length == 0)
-    alias TList Reverse;
+    static if (TList.length <= 1)
+    {
+        alias Reverse = TList;
+    }
     else
-    alias TypeTuple!(Reverse!(TList[1 .. $]), TList[0]) Reverse;
+    {
+        alias Reverse =
+            TypeTuple!(
+                Reverse!(TList[$/2 ..  $ ]),
+                Reverse!(TList[ 0  .. $/2]));
+    }
+}
+
+///
+unittest
+{
+    alias Types = TypeTuple!(int, long, long, int, float);
+
+    alias TL = Reverse!(Types);
+    static assert(is(TL == TypeTuple!(float, int, long, long, int)));
 }
 
 /**
  * Returns the type from TList that is the most derived from type T.
  * If none are found, T is returned.
- * Example:
- * ---
- * class A { }
- * class B : A { }
- * class C : B { }
- * alias TypeTuple!(A, C, B) TL;
- *
- * MostDerived!(Object, TL) x;  // x is declared as type C
- * ---
  */
 template MostDerived(T, TList...)
 {
@@ -489,20 +497,21 @@ template MostDerived(T, TList...)
     alias MostDerived!(T, TList[1 .. $]) MostDerived;
 }
 
+///
+unittest
+{
+    class A { }
+    class B : A { }
+    class C : B { }
+    alias Types = TypeTuple!(A, C, B);
+
+    MostDerived!(Object, Types) x;  // x is declared as type C
+    static assert(is(typeof(x) == C));
+}
+
 /**
  * Returns the typetuple TList with the types sorted so that the most
  * derived types come first.
- * Example:
- * ---
- * class A { }
- * class B : A { }
- * class C : B { }
- * alias TypeTuple!(A, C, B) TL;
- *
- * DerivedToFront!(TL)
- * // is the same as:
- * TypeTuple!(C, B, A)
- * ---
  */
 template DerivedToFront(TList...)
 {
@@ -515,27 +524,45 @@ template DerivedToFront(TList...)
                             TList[1 .. $]))) DerivedToFront;
 }
 
+///
+unittest
+{
+    class A { }
+    class B : A { }
+    class C : B { }
+    alias Types = TypeTuple!(A, C, B);
+
+    alias TL = DerivedToFront!(Types);
+    static assert(is(TL == TypeTuple!(C, B, A)));
+}
 
 /**
 Evaluates to $(D TypeTuple!(F!(T[0]), F!(T[1]), ..., F!(T[$ - 1]))).
-
-Example:
-----
-alias staticMap!(Unqual, int, const int, immutable int) T;
-static assert(is(T == TypeTuple!(int, int, int)));
-----
  */
 template staticMap(alias F, T...)
 {
     static if (T.length == 0)
     {
-        alias TypeTuple!() staticMap;
+        alias staticMap = TypeTuple!();
+    }
+    else static if (T.length == 1)
+    {
+        alias staticMap = TypeTuple!(F!(T[0]));
     }
     else
     {
-        alias TypeTuple!(F!(T[0]),
-                         staticMap!(F, T[1 .. $])) staticMap;
+        alias staticMap =
+            TypeTuple!(
+                staticMap!(F, T[ 0  .. $/2]),
+                staticMap!(F, T[$/2 ..  $ ]));
     }
+}
+
+///
+unittest
+{
+    alias TL = staticMap!(Unqual, int, const int, immutable int);
+    static assert(is(TL == TypeTuple!(int, int, int)));
 }
 
 unittest
@@ -553,92 +580,304 @@ unittest
 }
 
 /**
-Evaluates to $(D F!(T[0]) && F!(T[1]) && ... && F!(T[$ - 1])).
+Tests whether all given items satisfy a template predicate, i.e. evaluates to
+$(D F!(T[0]) && F!(T[1]) && ... && F!(T[$ - 1])).
 
-Example:
-----
-static assert(!allSatisfy!(isIntegral, int, double));
-static assert(allSatisfy!(isIntegral, int, long));
-----
+Evaluation is $(I not) short-circuited if a false result is encountered; the
+template predicate must be instantiable with all the given items.
  */
 template allSatisfy(alias F, T...)
 {
     static if (T.length == 0)
     {
-        enum bool allSatisfy = true;
+        enum allSatisfy = true;
     }
     else static if (T.length == 1)
     {
-        alias F!(T[0]) allSatisfy;
+        enum allSatisfy = F!(T[0]);
     }
     else
     {
-        enum bool allSatisfy = F!(T[0]) && allSatisfy!(F, T[1 .. $]);
+        enum allSatisfy =
+            allSatisfy!(F, T[ 0  .. $/2]) &&
+            allSatisfy!(F, T[$/2 ..  $ ]);
     }
 }
 
+///
 unittest
 {
     static assert(!allSatisfy!(isIntegral, int, double));
-    static assert(allSatisfy!(isIntegral, int, long));
+    static assert( allSatisfy!(isIntegral, int, long));
 }
 
 /**
-Evaluates to $(D F!(T[0]) || F!(T[1]) || ... || F!(T[$ - 1])).
+Tests whether all given items satisfy a template predicate, i.e. evaluates to
+$(D F!(T[0]) || F!(T[1]) || ... || F!(T[$ - 1])).
 
-Example:
-----
-static assert(!anySatisfy!(isIntegral, string, double));
-static assert(anySatisfy!(isIntegral, int, double));
-----
+Evaluation is $(I not) short-circuited if a true result is encountered; the
+template predicate must be instantiable with all the given items.
  */
 template anySatisfy(alias F, T...)
 {
     static if(T.length == 0)
     {
-        enum bool anySatisfy = false;
+        enum anySatisfy = false;
     }
     else static if (T.length == 1)
     {
-        alias F!(T[0]) anySatisfy;
+        enum anySatisfy = F!(T[0]);
     }
     else
     {
-        enum bool anySatisfy = F!(T[0]) || anySatisfy!(F, T[1 .. $]);
+        enum anySatisfy =
+            anySatisfy!(F, T[ 0  .. $/2]) ||
+            anySatisfy!(F, T[$/2 ..  $ ]);
     }
+}
+
+///
+unittest
+{
+    static assert(!anySatisfy!(isIntegral, string, double));
+    static assert( anySatisfy!(isIntegral, int, double));
+}
+
+
+/**
+ * Filters a $(D TypeTuple) using a template predicate. Returns a
+ * $(D TypeTuple) of the elements which satisfy the predicate.
+ */
+template Filter(alias pred, TList...)
+{
+    static if (TList.length == 0)
+    {
+        alias Filter = TypeTuple!();
+    }
+    else static if (TList.length == 1)
+    {
+        static if (pred!(TList[0]))
+            alias Filter = TypeTuple!(TList[0]);
+        else
+            alias Filter = TypeTuple!();
+    }
+    else
+    {
+        alias Filter =
+            TypeTuple!(
+                Filter!(pred, TList[ 0  .. $/2]),
+                Filter!(pred, TList[$/2 ..  $ ]));
+    }
+}
+
+///
+unittest
+{
+    alias Types1 = TypeTuple!(string, wstring, dchar[], char[], dstring, int);
+    alias TL1 = Filter!(isNarrowString, Types1);
+    static assert(is(TL1 == TypeTuple!(string, wstring, char[])));
+
+    alias Types2 = TypeTuple!(int, byte, ubyte, dstring, dchar, uint, ulong);
+    alias TL2 = Filter!(isUnsigned, Types2);
+    static assert(is(TL2 == TypeTuple!(ubyte, uint, ulong)));
 }
 
 unittest
 {
-    static assert(!anySatisfy!(isIntegral, string, double));
-    static assert(anySatisfy!(isIntegral, int, double));
+    static assert(is(Filter!(isPointer, int, void*, char[], int*) == TypeTuple!(void*, int*)));
+    static assert(is(Filter!isPointer == TypeTuple!()));
 }
 
+
+// Used in template predicate unit tests below.
+private version (unittest)
+{
+    template testAlways(T...)
+    {
+        enum testAlways = true;
+    }
+
+    template testNever(T...)
+    {
+        enum testNever = false;
+    }
+
+    template testError(T...)
+    {
+        static assert(false, "Should never be instantiated.");
+    }
+}
+
+
+/**
+ * Negates the passed template predicate.
+ */
+template templateNot(alias pred)
+{
+    template templateNot(T...)
+    {
+        enum templateNot = !pred!T;
+    }
+}
+
+///
+unittest
+{
+    import std.traits;
+
+    alias isNoPointer = templateNot!isPointer;
+    static assert(!isNoPointer!(int*));
+    static assert(allSatisfy!(isNoPointer, string, char, float));
+}
+
+unittest
+{
+    foreach (T; TypeTuple!(int, staticMap, 42))
+    {
+        static assert(!Instantiate!(templateNot!testAlways, T));
+        static assert(Instantiate!(templateNot!testNever, T));
+    }
+}
+
+
+/**
+ * Combines several template predicates using logical AND, i.e. constructs a new
+ * predicate which evaluates to true for a given input T if and only if all of
+ * the passed predicates are true for T.
+ *
+ * The predicates are evaluated from left to right, aborting evaluation in a
+ * short-cut manner if a false result is encountered, in which case the latter
+ * instantiations do not need to compile.
+ */
+template templateAnd(Preds...)
+{
+    template templateAnd(T...)
+    {
+        static if (Preds.length == 0)
+        {
+            enum templateAnd = true;
+        }
+        else
+        {
+            static if (Instantiate!(Preds[0], T))
+                alias Instantiate!(.templateAnd!(Preds[1 .. $]), T) templateAnd;
+            else
+                enum templateAnd = false;
+        }
+    }
+}
+
+///
+unittest
+{
+    alias storesNegativeNumbers = templateAnd!(isNumeric, templateNot!isUnsigned);
+    static assert(storesNegativeNumbers!int);
+    static assert(!storesNegativeNumbers!string && !storesNegativeNumbers!uint);
+
+    // An empty list of predicates always yields true.
+    alias alwaysTrue = templateAnd!();
+    static assert(alwaysTrue!int);
+}
+
+unittest
+{
+    foreach (T; TypeTuple!(int, staticMap, 42))
+    {
+        static assert( Instantiate!(templateAnd!(), T));
+        static assert( Instantiate!(templateAnd!(testAlways), T));
+        static assert( Instantiate!(templateAnd!(testAlways, testAlways), T));
+        static assert(!Instantiate!(templateAnd!(testNever), T));
+        static assert(!Instantiate!(templateAnd!(testAlways, testNever), T));
+        static assert(!Instantiate!(templateAnd!(testNever, testAlways), T));
+
+        static assert(!Instantiate!(templateAnd!(testNever, testError), T));
+        static assert(!is(typeof(Instantiate!(templateAnd!(testAlways, testError), T))));
+    }
+}
+
+
+/**
+ * Combines several template predicates using logical OR, i.e. constructs a new
+ * predicate which evaluates to true for a given input T if and only at least
+ * one of the passed predicates is true for T.
+ *
+ * The predicates are evaluated from left to right, aborting evaluation in a
+ * short-cut manner if a true result is encountered, in which case the latter
+ * instantiations do not need to compile.
+ */
+template templateOr(Preds...)
+{
+    template templateOr(T...)
+    {
+        static if (Preds.length == 0)
+        {
+            enum templateOr = false;
+        }
+        else
+        {
+            static if (Instantiate!(Preds[0], T))
+                enum templateOr = true;
+            else
+                alias Instantiate!(.templateOr!(Preds[1 .. $]), T) templateOr;
+        }
+    }
+}
+
+///
+unittest
+{
+    alias isPtrOrUnsigned = templateOr!(isPointer, isUnsigned);
+    static assert( isPtrOrUnsigned!uint &&  isPtrOrUnsigned!(short*));
+    static assert(!isPtrOrUnsigned!int  && !isPtrOrUnsigned!(string));
+
+    // An empty list of predicates never yields true.
+    alias alwaysFalse = templateOr!();
+    static assert(!alwaysFalse!int);
+}
+
+unittest
+{
+    foreach (T; TypeTuple!(int, staticMap, 42))
+    {
+        static assert( Instantiate!(templateOr!(testAlways), T));
+        static assert( Instantiate!(templateOr!(testAlways, testAlways), T));
+        static assert( Instantiate!(templateOr!(testAlways, testNever), T));
+        static assert( Instantiate!(templateOr!(testNever, testAlways), T));
+        static assert(!Instantiate!(templateOr!(), T));
+        static assert(!Instantiate!(templateOr!(testNever), T));
+
+        static assert( Instantiate!(templateOr!(testAlways, testError), T));
+        static assert( Instantiate!(templateOr!(testNever, testAlways, testError), T));
+        // DMD @@BUG@@: Assertion fails for int, seems like a error gagging
+        // problem. The bug goes away when removing some of the other template
+        // instantiations in the module.
+        // static assert(!is(typeof(Instantiate!(templateOr!(testNever, testError), T))));
+    }
+}
+
+
 // : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : //
-private:
+package:
 
 /*
- * [internal] With the builtin alias declaration, you cannot declare
+ * With the builtin alias declaration, you cannot declare
  * aliases of, for example, literal values. You can alias anything
  * including literal values via this template.
  */
-private
+// symbols and literal values
+template Alias(alias a)
 {
-    // symbols and literal values
-    template Alias(alias a)
-    {
-        static if (__traits(compiles, { alias a x; }))
-            alias a Alias;
-        else static if (__traits(compiles, { enum x = a; }))
-            enum Alias = a;
-        else
-            static assert(0, "Cannot alias " ~ a.stringof);
-    }
-    // types and tuples
-    template Alias(a...)
-    {
+    static if (__traits(compiles, { alias a x; }))
         alias a Alias;
-    }
+    else static if (__traits(compiles, { enum x = a; }))
+        enum Alias = a;
+    else
+        static assert(0, "Cannot alias " ~ a.stringof);
+}
+// types and tuples
+template Alias(a...)
+{
+    alias a Alias;
 }
 
 unittest
@@ -650,6 +889,9 @@ unittest
     static assert(__traits(compiles, { alias Alias!(1,abc,int) a; }));
 }
 
+
+// : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : //
+private:
 
 /*
  * [internal] Returns true if a and b are the same thing, or false if
@@ -764,3 +1006,16 @@ unittest
     static assert(!Pack!(1, int, "abc").equals!(1, int, "cba"));
 }
 
+/*
+ * Instantiates the given template with the given list of parameters.
+ *
+ * Used to work around syntactic limitations of D with regard to instantiating
+ * a template from a type tuple (e.g. T[0]!(...) is not valid) or a template
+ * returning another template (e.g. Foo!(Bar)!(Baz) is not allowed).
+ */
+// TODO: Consider publicly exposing this, maybe even if only for better
+// understandability of error messages.
+template Instantiate(alias Template, Params...)
+{
+    alias Template!Params Instantiate;
+}
