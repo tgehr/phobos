@@ -441,6 +441,8 @@ enum DecodeMode
  */
 string decode(string s, DecodeMode mode=DecodeMode.LOOSE)
 {
+    import std.utf : encode;
+
     if (mode == DecodeMode.NONE) return s;
 
     char[] buffer;
@@ -967,7 +969,7 @@ class Element : Item
  * $(DDOC_ENUM_MEMBERS EMPTY) Used for empty tags
  *
  */
-enum TagType { START, END, EMPTY };
+enum TagType { START, END, EMPTY }
 
 /**
  * Class representing an XML tag.

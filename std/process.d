@@ -118,26 +118,6 @@ version (Win32) version (DigitalMars) version = DMC_RUNTIME;
 private
 {
 
-// Windows API declarations.
-version (Windows)
-{
-    extern(Windows) BOOL GetHandleInformation(HANDLE hObject,
-                                              LPDWORD lpdwFlags);
-    extern(Windows) BOOL SetHandleInformation(HANDLE hObject,
-                                              DWORD dwMask,
-                                              DWORD dwFlags);
-    extern(Windows) BOOL TerminateProcess(HANDLE hProcess,
-                                          UINT uExitCode);
-    extern(Windows) LPWSTR* CommandLineToArgvW(LPCWSTR lpCmdLine,
-                                               int* pNumArgs);
-    enum
-    {
-        HANDLE_FLAG_INHERIT = 0x1,
-        HANDLE_FLAG_PROTECT_FROM_CLOSE = 0x2,
-    }
-    enum CREATE_UNICODE_ENVIRONMENT = 0x400;
-}
-
 // Microsoft Visual C Runtime (MSVCRT) declarations.
 version (Windows)
 {
@@ -375,7 +355,9 @@ private Pid spawnProcessImpl(in char[][] args,
                              Config config)
     @trusted // TODO: Should be @safe
 {
-    if (args.empty) throw new RangeError("Command line is empty");
+    import core.exception: RangeError;
+
+    if (args.empty) throw new RangeError();
     const(char)[] name = args[0];
     if (any!isDirSeparator(name))
     {
@@ -479,6 +461,8 @@ private Pid spawnProcessImpl(in char[] commandLine,
                              Config config)
     @trusted
 {
+    import core.exception: RangeError;
+
     if (commandLine.empty) throw new RangeError("Command line is empty");
     auto commandz = toUTFz!(wchar*)(commandLine);
 
@@ -1273,10 +1257,6 @@ auto pid = spawnProcess("some_app");
 kill(pid, 10);
 assert (wait(pid) == 10);
 ---
-$(RED Warning:) The mechanisms for process termination are
-$(LINK2 http://blogs.msdn.com/b/oldnewthing/archive/2007/05/03/2383346.aspx,
-incredibly badly specified) in the Windows API.  This function may therefore
-produce unexpected results, and should be used with the utmost care.
 
 POSIX_specific:
 A $(LINK2 http://en.wikipedia.org/wiki/Unix_signal,signal) will be sent to
@@ -1601,7 +1581,7 @@ string[] errors;
 foreach (line; pipes.stderr.byLine) errors ~= line.idup;
 ---
 */
-ProcessPipes pipeProcess(string[] args,
+ProcessPipes pipeProcess(in char[][] args,
                          Redirect redirectFlags = Redirect.all,
                          const string[string] env = null,
                          Config config = Config.none)
@@ -1611,7 +1591,7 @@ ProcessPipes pipeProcess(string[] args,
 }
 
 /// ditto
-ProcessPipes pipeProcess(string program,
+ProcessPipes pipeProcess(in char[] program,
                          Redirect redirectFlags = Redirect.all,
                          const string[string] env = null,
                          Config config = Config.none)
@@ -1621,7 +1601,7 @@ ProcessPipes pipeProcess(string program,
 }
 
 /// ditto
-ProcessPipes pipeShell(string command,
+ProcessPipes pipeShell(in char[] command,
                        Redirect redirectFlags = Redirect.all,
                        const string[string] env = null,
                        Config config = Config.none)
@@ -1935,7 +1915,7 @@ Throws:
 $(LREF ProcessException) on failure to start the process.$(BR)
 $(XREF stdio,StdioException) on failure to capture output.
 */
-auto execute(string[] args,
+auto execute(in char[][] args,
              const string[string] env = null,
              Config config = Config.none,
              size_t maxOutput = size_t.max)
@@ -1945,7 +1925,7 @@ auto execute(string[] args,
 }
 
 /// ditto
-auto execute(string program,
+auto execute(in char[] program,
              const string[string] env = null,
              Config config = Config.none,
              size_t maxOutput = size_t.max)
@@ -1955,7 +1935,7 @@ auto execute(string program,
 }
 
 /// ditto
-auto executeShell(string command,
+auto executeShell(in char[] command,
                   const string[string] env = null,
                   Config config = Config.none,
                   size_t maxOutput = size_t.max)
@@ -1981,7 +1961,7 @@ private auto executeImpl(alias pipeFunc, Cmd)(
     // Store up to maxOutput bytes in a.
     foreach (ubyte[] chunk; p.stdout.byChunk(chunkSize))
     {
-        immutable size_t remain = maxOutput - a.data().length;
+        immutable size_t remain = maxOutput - a.data.length;
 
         if (chunk.length < remain) a.put(chunk);
         else
@@ -2057,8 +2037,8 @@ class ProcessException : Exception
         {
             auto errnoMsg = to!string(std.c.string.strerror(errno));
         }
-        auto msg = customMsg.empty() ? errnoMsg
-                                     : customMsg ~ " (" ~ errnoMsg ~ ')';
+        auto msg = customMsg.empty ? errnoMsg
+                                   : customMsg ~ " (" ~ errnoMsg ~ ')';
         return new ProcessException(msg, file, line);
     }
 
@@ -2069,8 +2049,8 @@ class ProcessException : Exception
                                              size_t line = __LINE__)
     {
         auto lastMsg = sysErrorString(GetLastError());
-        auto msg = customMsg.empty() ? lastMsg
-                                     : customMsg ~ " (" ~ lastMsg ~ ')';
+        auto msg = customMsg.empty ? lastMsg
+                                   : customMsg ~ " (" ~ lastMsg ~ ')';
         return new ProcessException(msg, file, line);
     }
 }
@@ -2594,7 +2574,7 @@ static:
     See_also:
     $(LREF environment.get), which doesn't throw on failure.
     */
-    string opIndex(string name) @safe
+    string opIndex(in char[] name) @safe
     {
         string value;
         enforce(getImpl(name, value), "Environment variable not found: "~name);
@@ -2622,7 +2602,7 @@ static:
     }
     ---
     */
-    string get(string name, string defaultValue = null) @safe //TODO: nothrow
+    string get(in char[] name, string defaultValue = null) @safe //TODO: nothrow
     {
         string value;
         auto found = getImpl(name, value);
@@ -2643,7 +2623,7 @@ static:
     $(OBJECTREF Exception) if the environment variable could not be added
         (e.g. if the name is invalid).
     */
-    string opIndexAssign(string value, string name) @trusted
+    inout(char)[] opIndexAssign(inout char[] value, in char[] name) @trusted
     {
         version (Posix)
         {
@@ -2676,7 +2656,7 @@ static:
     If the variable isn't in the environment, this function returns
     successfully without doing anything.
     */
-    void remove(string name) @trusted // TODO: @safe nothrow
+    void remove(in char[] name) @trusted // TODO: @safe nothrow
     {
         version (Windows)    SetEnvironmentVariableW(toUTF16z(name), null);
         else version (Posix) core.sys.posix.stdlib.unsetenv(toStringz(name));
@@ -2753,7 +2733,7 @@ private:
     }
 
     // Retrieves the environment variable, returns false on failure.
-    bool getImpl(string name, out string value) @trusted //TODO: nothrow
+    bool getImpl(in char[] name, out string value) @trusted //TODO: nothrow
     {
         version (Windows)
         {

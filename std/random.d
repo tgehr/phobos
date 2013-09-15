@@ -112,7 +112,6 @@ version(unittest) import std.typetuple;
    email: m-mat @ math.sci.hiroshima-u.ac.jp (remove space)
 */
 
-
 /**
  * Test if Rng is a random-number generator. The overload
  * taking a ElementType also makes sure that the Rng generates
@@ -184,10 +183,10 @@ unittest
         @property bool empty() {return false;}
         void popFront() {}
     }
-    assert(!isUniformRNG!(NoRng, uint));
-    assert(!isUniformRNG!(NoRng));
-    assert(!isSeedable!(NoRng, uint));
-    assert(!isSeedable!(NoRng));
+    static assert(!isUniformRNG!(NoRng, uint));
+    static assert(!isUniformRNG!(NoRng));
+    static assert(!isSeedable!(NoRng, uint));
+    static assert(!isSeedable!(NoRng));
 
     struct NoRng2
     {
@@ -197,10 +196,10 @@ unittest
 
         enum isUniformRandom = false;
     }
-    assert(!isUniformRNG!(NoRng2, uint));
-    assert(!isUniformRNG!(NoRng2));
-    assert(!isSeedable!(NoRng2, uint));
-    assert(!isSeedable!(NoRng2));
+    static assert(!isUniformRNG!(NoRng2, uint));
+    static assert(!isUniformRNG!(NoRng2));
+    static assert(!isSeedable!(NoRng2, uint));
+    static assert(!isSeedable!(NoRng2));
 
     struct NoRng3
     {
@@ -209,10 +208,10 @@ unittest
 
         enum isUniformRandom = true;
     }
-    assert(!isUniformRNG!(NoRng3, uint));
-    assert(!isUniformRNG!(NoRng3));
-    assert(!isSeedable!(NoRng3, uint));
-    assert(!isSeedable!(NoRng3));
+    static assert(!isUniformRNG!(NoRng3, uint));
+    static assert(!isUniformRNG!(NoRng3));
+    static assert(!isSeedable!(NoRng3, uint));
+    static assert(!isSeedable!(NoRng3));
 
     struct validRng
     {
@@ -222,10 +221,10 @@ unittest
 
         enum isUniformRandom = true;
     }
-    assert(isUniformRNG!(validRng, uint));
-    assert(isUniformRNG!(validRng));
-    assert(!isSeedable!(validRng, uint));
-    assert(!isSeedable!(validRng));
+    static assert(isUniformRNG!(validRng, uint));
+    static assert(isUniformRNG!(validRng));
+    static assert(!isSeedable!(validRng, uint));
+    static assert(!isSeedable!(validRng));
 
     struct seedRng
     {
@@ -235,10 +234,10 @@ unittest
         void seed(uint val){}
         enum isUniformRandom = true;
     }
-    assert(isUniformRNG!(seedRng, uint));
-    assert(isUniformRNG!(seedRng));
-    assert(isSeedable!(seedRng, uint));
-    assert(isSeedable!(seedRng));
+    static assert(isUniformRNG!(seedRng, uint));
+    static assert(isUniformRNG!(seedRng));
+    static assert(isSeedable!(seedRng, uint));
+    static assert(isSeedable!(seedRng));
 }
 
 /**
@@ -456,15 +455,15 @@ alias LinearCongruentialEngine!(uint, 48271, 0, 2147483647) MinstdRand;
 
 unittest
 {
-    assert(isForwardRange!MinstdRand);
-    assert(isUniformRNG!MinstdRand);
-    assert(isUniformRNG!MinstdRand0);
-    assert(isUniformRNG!(MinstdRand, uint));
-    assert(isUniformRNG!(MinstdRand0, uint));
-    assert(isSeedable!MinstdRand);
-    assert(isSeedable!MinstdRand0);
-    assert(isSeedable!(MinstdRand, uint));
-    assert(isSeedable!(MinstdRand0, uint));
+    static assert(isForwardRange!MinstdRand);
+    static assert(isUniformRNG!MinstdRand);
+    static assert(isUniformRNG!MinstdRand0);
+    static assert(isUniformRNG!(MinstdRand, uint));
+    static assert(isUniformRNG!(MinstdRand0, uint));
+    static assert(isSeedable!MinstdRand);
+    static assert(isSeedable!MinstdRand0);
+    static assert(isSeedable!(MinstdRand, uint));
+    static assert(isSeedable!(MinstdRand0, uint));
 
     // The correct numbers are taken from The Database of Integer Sequences
     // http://www.research.att.com/~njas/sequences/eisBTfry00128.txt
@@ -505,6 +504,17 @@ unittest
     rnd.seed();
     popFrontN(rnd, 9999);
     assert(rnd.front == 399268537);
+
+    // Check .save works
+    foreach (Type; TypeTuple!(MinstdRand0, MinstdRand))
+    {
+        auto rnd1 = Type(unpredictableSeed);
+        auto rnd2 = rnd1.save;
+        assert(rnd1 == rnd2);
+        // Enable next test when RNGs are reference types
+        version(none) { assert(rnd1 !is rnd2); }
+        assert(rnd1.take(100).array() == rnd2.take(100).array());
+    }
 }
 
 /**
@@ -628,7 +638,7 @@ Parameter for the generator.
             upperMask = ~((cast(UIntType) 1u <<
                            (UIntType.sizeof * 8 - (w - r))) - 1),
             lowerMask = (cast(UIntType) 1u << r) - 1;
-        static immutable UIntType mag01[2] = [0x0UL, a];
+        static immutable UIntType[2] mag01 = [0x0UL, a];
 
         ulong y = void;
 
@@ -689,7 +699,7 @@ Always $(D false).
  */
     enum bool empty = false;
 
-    private UIntType mt[n];
+    private UIntType[n] mt;
     private size_t mti = size_t.max; /* means mt is not initialized */
     UIntType _y = UIntType.max;
 }
@@ -719,11 +729,11 @@ alias MersenneTwisterEngine!(uint, 32, 624, 397, 31, 0x9908b0df, 11, 7,
 
 unittest
 {
-    assert(isUniformRNG!Mt19937);
-    assert(isUniformRNG!(Mt19937, uint));
-    assert(isSeedable!Mt19937);
-    assert(isSeedable!(Mt19937, uint));
-    assert(isSeedable!(Mt19937, typeof(map!((a) => unpredictableSeed)(repeat(0)))));
+    static assert(isUniformRNG!Mt19937);
+    static assert(isUniformRNG!(Mt19937, uint));
+    static assert(isSeedable!Mt19937);
+    static assert(isSeedable!(Mt19937, uint));
+    static assert(isSeedable!(Mt19937, typeof(map!((a) => unpredictableSeed)(repeat(0)))));
     Mt19937 gen;
     popFrontN(gen, 9999);
     assert(gen.front == 4123659995);
@@ -756,6 +766,20 @@ unittest
     assert(a != b);
 }
 
+unittest
+{
+    // Check .save works
+    foreach(Type; TypeTuple!(Mt19937))
+    {
+        auto gen1 = Type(unpredictableSeed);
+        auto gen2 = gen1.save;
+        assert(gen1 == gen2);  // Danger, Will Robinson -- no opEquals for MT
+        // Enable next test when RNGs are reference types
+        version(none) { assert(gen1 !is gen2); }
+        assert(gen1.take(100).array() == gen2.take(100).array());
+    }
+}
+
 
 /**
  * Xorshift generator using 32bit algorithm.
@@ -776,8 +800,8 @@ struct XorshiftEngine(UIntType, UIntType bits, UIntType a, UIntType b, UIntType 
     if(isUnsigned!UIntType)
 {
     static assert(bits == 32 || bits == 64 || bits == 96 || bits == 128 || bits == 160 || bits == 192,
-                  "Supporting bits are 32, 64, 96, 128, 160 and 192. " ~ to!string(bits) ~ " is not supported.");
-
+                  "Xorshift supports only 32, 64, 96, 128, 160 and 192 bit versions. "
+                  ~ to!string(bits) ~ " is not supported.");
 
   public:
     ///Mark this as a Rng
@@ -803,10 +827,15 @@ struct XorshiftEngine(UIntType, UIntType bits, UIntType a, UIntType b, UIntType 
         UIntType[size] seeds_ = [123456789, 362436069, 521288629, 88675123];
     else static if (bits == 160)
         UIntType[size] seeds_ = [123456789, 362436069, 521288629, 88675123, 5783321];
-    else
-    { // 192bits
+    else static if (bits == 192)
+    {
         UIntType[size] seeds_ = [123456789, 362436069, 521288629, 88675123, 5783321, 6615241];
         UIntType       value_;
+    }
+    else
+    {
+        static assert(false, "Phobos Error: Xorshift has no instantiation rule for "
+                             ~ to!string(bits) ~ " bits.");
     }
 
 
@@ -862,7 +891,7 @@ struct XorshiftEngine(UIntType, UIntType bits, UIntType a, UIntType b, UIntType 
         static if (bits == 32)
         {
             temp      = seeds_[0] ^ (seeds_[0] << a);
-            temp      = temp >> b;
+            temp      = temp ^ (temp >> b);
             seeds_[0] = temp ^ (temp << c);
         }
         else static if (bits == 64)
@@ -888,15 +917,15 @@ struct XorshiftEngine(UIntType, UIntType bits, UIntType a, UIntType b, UIntType 
         }
         else static if (bits == 160)
         {
-            temp      = seeds_[0] ^ (seeds_[0] >> a);
+            temp      = seeds_[0] ^ (seeds_[0] << a);
             seeds_[0] = seeds_[1];
             seeds_[1] = seeds_[2];
             seeds_[2] = seeds_[3];
             seeds_[3] = seeds_[4];
             seeds_[4] = seeds_[4] ^ (seeds_[4] >> c) ^ temp ^ (temp >> b);
         }
-        else
-        { // 192bits
+        else static if (bits == 192)
+        {
             temp      = seeds_[0] ^ (seeds_[0] >> a);
             seeds_[0] = seeds_[1];
             seeds_[1] = seeds_[2];
@@ -904,6 +933,11 @@ struct XorshiftEngine(UIntType, UIntType bits, UIntType a, UIntType b, UIntType 
             seeds_[3] = seeds_[4];
             seeds_[4] = seeds_[4] ^ (seeds_[4] << c) ^ temp ^ (temp << b);
             value_    = seeds_[4] + (seeds_[5] += 362437);
+        }
+        else
+        {
+            static assert(false, "Phobos Error: Xorshift has no popFront() update for "
+                                 ~ to!string(bits) ~ " bits.");
         }
     }
 
@@ -969,7 +1003,7 @@ struct XorshiftEngine(UIntType, UIntType bits, UIntType a, UIntType b, UIntType 
  * num = rnd.front; // different across runs
  * -----
  */
-alias XorshiftEngine!(uint, 32,  13, 17, 5)  Xorshift32;
+alias XorshiftEngine!(uint, 32,  13, 17, 15)  Xorshift32;
 alias XorshiftEngine!(uint, 64,  10, 13, 10) Xorshift64;   /// ditto
 alias XorshiftEngine!(uint, 96,  10, 5,  26) Xorshift96;   /// ditto
 alias XorshiftEngine!(uint, 128, 11, 8,  19) Xorshift128;  /// ditto
@@ -980,23 +1014,25 @@ alias Xorshift128 Xorshift;                                /// ditto
 
 unittest
 {
-    assert(isForwardRange!Xorshift);
-    assert(isUniformRNG!Xorshift);
-    assert(isUniformRNG!(Xorshift, uint));
-    assert(isSeedable!Xorshift);
-    assert(isSeedable!(Xorshift, uint));
+    static assert(isForwardRange!Xorshift);
+    static assert(isUniformRNG!Xorshift);
+    static assert(isUniformRNG!(Xorshift, uint));
+    static assert(isSeedable!Xorshift);
+    static assert(isSeedable!(Xorshift, uint));
 
     // Result from reference implementation.
     auto checking = [
-        [2463534242UL, 267649, 551450, 53765, 108832, 215250, 435468, 860211, 660133, 263375],
+        [2463534242UL, 901999875, 3371835698, 2675058524, 1053936272, 3811264849, 472493137, 3856898176, 2131710969, 2312157505],
         [362436069UL, 2113136921, 19051112, 3010520417, 951284840, 1213972223, 3173832558, 2611145638, 2515869689, 2245824891],
         [521288629UL, 1950277231, 185954712, 1582725458, 3580567609, 2303633688, 2394948066, 4108622809, 1116800180, 3357585673],
         [88675123UL, 3701687786, 458299110, 2500872618, 3633119408, 516391518, 2377269574, 2599949379, 717229868, 137866584],
-        [5783321UL, 93724048, 491642011, 136638118, 246438988, 238186808, 140181925, 533680092, 285770921, 462053907],
+        [5783321UL, 393427209, 1947109840, 565829276, 1006220149, 971147905, 1436324242, 2800460115, 1484058076, 3823330032],
         [0UL, 246875399, 3690007200, 1264581005, 3906711041, 1866187943, 2481925219, 2464530826, 1604040631, 3653403911]
     ];
 
-    foreach (I, Type; TypeTuple!(Xorshift32, Xorshift64, Xorshift96, Xorshift128, Xorshift160, Xorshift192))
+    alias TypeTuple!(Xorshift32, Xorshift64, Xorshift96, Xorshift128, Xorshift160, Xorshift192) XorshiftTypes;
+
+    foreach (I, Type; XorshiftTypes)
     {
         Type rnd;
 
@@ -1005,6 +1041,48 @@ unittest
             assert(rnd.front == e);
             rnd.popFront();
         }
+    }
+
+    // Check .save works
+    foreach (Type; XorshiftTypes)
+    {
+        auto rnd1 = Type(unpredictableSeed);
+        auto rnd2 = rnd1.save;
+        assert(rnd1 == rnd2);
+        // Enable next test when RNGs are reference types
+        version(none) { assert(rnd1 !is rnd2); }
+        assert(rnd1.take(100).array() == rnd2.take(100).array());
+    }
+}
+
+
+/* A complete list of all pseudo-random number generators implemented in
+ * std.random.  This can be used to confirm that a given function or
+ * object is compatible with all the pseudo-random number generators
+ * available.  It is enabled only in unittest mode.
+ *
+ * Example:
+ *
+ * ----
+ * foreach(Rng; PseudoRngTypes)
+ * {
+ *     static assert(isUniformRng!Rng);
+ *     auto rng = Rng(unpredictableSeed);
+ *     foo(rng);
+ * }
+ * ----
+ */
+version(unittest)
+{
+    package alias PseudoRngTypes = TypeTuple!(MinstdRand0, MinstdRand, Mt19937, Xorshift32, Xorshift64,
+                                              Xorshift96, Xorshift128, Xorshift160, Xorshift192);
+}
+
+unittest
+{
+    foreach(Rng; PseudoRngTypes)
+    {
+        static assert(isUniformRNG!Rng);
     }
 }
 
@@ -1056,10 +1134,10 @@ alias Mt19937 Random;
 
 unittest
 {
-    assert(isUniformRNG!Random);
-    assert(isUniformRNG!(Random, uint));
-    assert(isSeedable!Random);
-    assert(isSeedable!(Random, uint));
+    static assert(isUniformRNG!Random);
+    static assert(isUniformRNG!(Random, uint));
+    static assert(isSeedable!Random);
+    static assert(isSeedable!(Random, uint));
 }
 
 /**
@@ -1093,7 +1171,7 @@ take $(D urng) uses the default generator $(D rndGen).
 Example:
 
 ----
-Random gen(unpredictableSeed);
+auto gen = Random(unpredictableSeed);
 // Generate an integer in [0, 1023]
 auto a = uniform(0, 1024, gen);
 // Generate a float in [0, 1$(RPAREN)
@@ -1353,23 +1431,33 @@ Shuffles elements of $(D r) using $(D gen) as a shuffler. $(D r) must be
 a random-access range with length.
  */
 
-void randomShuffle(Range, RandomGen = Random)(Range r,
-                                              ref RandomGen gen = rndGen)
+void randomShuffle(Range, RandomGen)(Range r, ref RandomGen gen)
     if(isRandomAccessRange!Range && isUniformRNG!RandomGen)
 {
     return partialShuffle!(Range, RandomGen)(r, r.length, gen);
 }
 
+/// ditto
+void randomShuffle(Range)(Range r)
+    if(isRandomAccessRange!Range)
+{
+    return randomShuffle(r, rndGen);
+}
+
 unittest
 {
-    // Also tests partialShuffle indirectly.
-    auto a = ([ 1, 2, 3, 4, 5, 6, 7, 8, 9 ]).dup;
-    auto b = a.dup;
-    Mt19937 gen;
-    randomShuffle(a, gen);
-    assert(a.sort == b.sort);
-    randomShuffle(a);
-    assert(a.sort == b.sort);
+    foreach(Rng; PseudoRngTypes)
+    {
+        static assert(isUniformRNG!Rng);
+        // Also tests partialShuffle indirectly.
+        auto a = ([ 1, 2, 3, 4, 5, 6, 7, 8, 9 ]).dup;
+        auto b = a.dup;
+        Rng gen;
+        randomShuffle(a, gen);
+        assert(a.sort == b.sort);
+        randomShuffle(a);
+        assert(a.sort == b.sort);
+    }
 }
 
 /**
@@ -1383,8 +1471,7 @@ $(D partialShuffle) was called.
 $(D r) must be a random-access range with length.  $(D n) must be less than
 or equal to $(D r.length).
 */
-void partialShuffle(Range, RandomGen = Random)(Range r, size_t n,
-                                              ref RandomGen gen = rndGen)
+void partialShuffle(Range, RandomGen)(Range r, size_t n, ref RandomGen gen)
     if(isRandomAccessRange!Range && isUniformRNG!RandomGen)
 {
     enforce(n <= r.length, "n must be <= r.length for partialShuffle.");
@@ -1392,6 +1479,13 @@ void partialShuffle(Range, RandomGen = Random)(Range r, size_t n,
     {
         swapAt(r, i, i + uniform(0, r.length - i, gen));
     }
+}
+
+/// ditto
+void partialShuffle(Range)(Range r, size_t n)
+    if(isRandomAccessRange!Range)
+{
+    return partialShuffle(r, n, rndGen);
 }
 
 /**
@@ -1535,7 +1629,6 @@ struct RandomCover(Range, Random)
             --k;
             ++i;
         }
-        assert(false);
     }
 
     @property typeof(this) save()
@@ -1604,7 +1697,7 @@ of size $(D n) in O(n) steps and requiring O(n) random variates,
 regardless of the size of the data being sampled.
 */
 struct RandomSample(R, Random = void)
-    if(isInputRange!R && (isUniformRNG!Random || is(Random == void)))
+    if (isInputRange!R && (isUniformRNG!Random || is(Random == void)))
 {
     private size_t _available, _toSelect;
     private enum ushort _alphaInverse = 13; // Vitter's recommended value.
@@ -1617,7 +1710,7 @@ struct RandomSample(R, Random = void)
     // we shouldn't store a copy of it here.  Random == void is a sentinel
     // for this.  If we're using a user-specified generator then we have no
     // choice but to store a copy.
-    static if(!is(Random == void))
+    static if (!is(Random == void))
     {
         Random _gen;
 
@@ -1660,7 +1753,16 @@ struct RandomSample(R, Random = void)
     {
         _available = total;
         _toSelect = howMany;
-        enforce(_toSelect <= _available);
+        enforce(_toSelect <= _available,
+                text("RandomSample: cannot sample ", _toSelect,
+                     " items when only ", _available, " are available"));
+        static if (hasLength!R)
+        {
+            enforce(_available <= _input.length,
+                    text("RandomSample: specified ", _available,
+                         " items as available when input contains only ",
+                         _input.length));
+        }
         _first = true;
     }
 
@@ -1679,11 +1781,11 @@ struct RandomSample(R, Random = void)
         // having it always correspond to the first element of the
         // input.  The rest of the sample points are determined each
         // time we call popFront().
-        if(_first)
+        if (_first)
         {
             // We can save ourselves a random variate by checking right
             // at the beginning if we should use Algorithm A.
-            if((_alphaInverse * _toSelect) > _available)
+            if ((_alphaInverse * _toSelect) > _available)
             {
                 _algorithmA = true;
             }
@@ -1709,7 +1811,7 @@ struct RandomSample(R, Random = void)
     }
 
 /// Ditto
-    static if(isForwardRange!R)
+    static if (isForwardRange!R)
     {
         @property typeof(this) save()
         {
@@ -1742,7 +1844,7 @@ to remaining data values is sufficiently large.
         size_t s;
         double v, quot, top;
 
-        if(_toSelect==1)
+        if (_toSelect==1)
         {
             static if(is(Random==void))
             {
@@ -1759,7 +1861,7 @@ to remaining data values is sufficiently large.
             top = _available - _toSelect;
             quot = top / _available;
 
-            static if(is(Random==void))
+            static if (is(Random==void))
             {
                 v = uniform!"()"(0.0, 1.0);
             }
@@ -1783,7 +1885,7 @@ Randomly reset the value of _Vprime.
 */
     private double newVprime(size_t remaining)
     {
-        static if(is(Random == void))
+        static if (is(Random == void))
         {
             double r = uniform!"()"(0.0, 1.0);
         }
@@ -1813,17 +1915,17 @@ Variable names are chosen to match those in Vitter's paper.
         // than a certain proportion of the remaining data points, i.e.
         // if n >= alpha * N where alpha = 1/13, we carry out the
         // sampling with Algorithm A.
-        if(_algorithmA)
+        if (_algorithmA)
         {
             return skipA();
         }
-        else if((_alphaInverse * _toSelect) > _available)
+        else if ((_alphaInverse * _toSelect) > _available)
         {
             _algorithmA = true;
             return skipA();
         }
         // Otherwise, we use the standard Algorithm D mechanism.
-        else if ( _toSelect > 1 )
+        else if (_toSelect > 1)
         {
             size_t s;
             size_t qu1 = 1 + _available - _toSelect;
@@ -1839,7 +1941,7 @@ Variable names are chosen to match those in Vitter's paper.
                     _Vprime = newVprime(_toSelect);
                 }
 
-                static if(is(Random == void))
+                static if (is(Random == void))
                 {
                     double u = uniform!"()"(0.0, 1.0);
                 }
@@ -1854,12 +1956,12 @@ Variable names are chosen to match those in Vitter's paper.
 
                 // Step D3: if _Vprime <= 1.0 our work is done and we return S.
                 // Otherwise ...
-                if(_Vprime > 1.0)
+                if (_Vprime > 1.0)
                 {
                     size_t top = _available - 1, limit;
                     double y2 = 1.0, bottom;
 
-                    if(_toSelect > (s+1) )
+                    if (_toSelect > (s+1))
                     {
                         bottom = _available - _toSelect;
                         limit = _available - s;
@@ -1878,7 +1980,7 @@ Variable names are chosen to match those in Vitter's paper.
                     }
 
                     // Step D4: decide whether or not to accept the current value of S.
-                    if( (_available/(_available-x)) < (y1 * (y2 ^^ (1.0/(_toSelect-1)))) )
+                    if (_available/(_available-x) < y1 * (y2 ^^ (1.0/(_toSelect-1))))
                     {
                         // If it's not acceptable, we generate a new value of _Vprime
                         // and go back to the start of the for(;;) loop.
@@ -1912,86 +2014,269 @@ Variable names are chosen to match those in Vitter's paper.
         if (empty) return;
         assert(_available && _available >= _toSelect);
         immutable size_t s = skip();
-        _input.popFrontN(s);
+        assert(s + _toSelect <= _available);
+        static if (hasLength!R)
+        {
+            assert(s + _toSelect <= _input.length);
+        }
+        assert(!_input.empty);
+        _input.popFrontExactly(s);
         _index += s;
         _available -= s;
         assert(_available > 0);
-        return;
     }
 }
 
 /// Ditto
 auto randomSample(R)(R r, size_t n, size_t total)
-if(isInputRange!R)
+    if (isInputRange!R)
 {
     return RandomSample!(R, void)(r, n, total);
 }
 
 /// Ditto
 auto randomSample(R)(R r, size_t n)
-    if(isInputRange!R && hasLength!R)
+    if (isInputRange!R && hasLength!R)
 {
     return RandomSample!(R, void)(r, n, r.length);
 }
 
 /// Ditto
 auto randomSample(R, Random)(R r, size_t n, size_t total, Random gen)
-if(isInputRange!R && isUniformRNG!Random)
+    if (isInputRange!R && isUniformRNG!Random)
 {
     return RandomSample!(R, Random)(r, n, total, gen);
 }
 
 /// Ditto
 auto randomSample(R, Random)(R r, size_t n, Random gen)
-if (isInputRange!R && hasLength!R && isUniformRNG!Random)
+    if (isInputRange!R && hasLength!R && isUniformRNG!Random)
 {
     return RandomSample!(R, Random)(r, n, r.length, gen);
 }
 
 unittest
 {
+    // For test purposes, an infinite input range
+    struct TestInputRange
+    {
+        private auto r = recurrence!"a[n-1] + 1"(0);
+        bool empty() @property const pure nothrow { return r.empty; }
+        auto front() @property pure nothrow { return r.front; }
+        void popFront() pure nothrow { r.popFront(); }
+    }
+    static assert(isInputRange!TestInputRange);
+    static assert(!isForwardRange!TestInputRange);
+
     Random gen;
     int[] a = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ];
+
+    /* First test the most general case: randomSample of input range, with and
+     * without a specified random number generator.
+     */
+    static assert(isInputRange!(typeof(randomSample(TestInputRange(), 5, 10))));
+    static assert(isInputRange!(typeof(randomSample(TestInputRange(), 5, 10, gen))));
+    static assert(!isForwardRange!(typeof(randomSample(TestInputRange(), 5, 10))));
+    static assert(!isForwardRange!(typeof(randomSample(TestInputRange(), 5, 10, gen))));
+
+    /* Now test the case of an input range with length.  We ignore the cases
+     * already covered by the previous tests.
+     */
+    static assert(isInputRange!(typeof(randomSample(TestInputRange().takeExactly(10), 5))));
+    static assert(isInputRange!(typeof(randomSample(TestInputRange().takeExactly(10), 5, gen))));
+    static assert(!isForwardRange!(typeof(randomSample(TestInputRange().takeExactly(10), 5))));
+    static assert(!isForwardRange!(typeof(randomSample(TestInputRange().takeExactly(10), 5, gen))));
+
+    // Now test the case of providing a forward range as input.
     static assert(isForwardRange!(typeof(randomSample(a, 5))));
     static assert(isForwardRange!(typeof(randomSample(a, 5, gen))));
 
-    struct TestInputRange
-    {
-        private int[] arr = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-        @property bool empty() const { return arr.empty; }
-        @property int front() const { return arr.front; }
-        void popFront() { arr.popFront(); }
-    }
-    static assert(isInputRange!TestInputRange);
-    TestInputRange input;
-    static assert(isInputRange!(typeof(randomSample(input, 5, 10))));
-    static assert(isInputRange!(typeof(randomSample(input, 5, 10, gen))));
+    /* Check that randomSample will throw an error if we claim more
+     * items are available than there actually are, or if we try to
+     * sample more items than are available. */
+    assert(collectExceptionMsg(randomSample(a, 5, 15)) == "RandomSample: specified 15 items as available when input contains only 10");
+    assert(collectExceptionMsg(randomSample(a, 15)) == "RandomSample: cannot sample 15 items when only 10 are available");
+    assert(collectExceptionMsg(randomSample(a, 9, 8)) == "RandomSample: cannot sample 9 items when only 8 are available");
+    assert(collectExceptionMsg(randomSample(TestInputRange(), 12, 11)) == "RandomSample: cannot sample 12 items when only 11 are available");
 
-    struct TestInputRangeWithLength
+    /* Check that sampling algorithm never accidentally overruns the end of
+     * the input range.  If input is an InputRange without .length, this
+     * relies on the user specifying the total number of available items
+     * correctly.
+     */
     {
-        private int[] arr = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-        @property bool empty() const { return arr.empty; }
-        @property int front() const { return arr.front; }
-        void popFront() { arr.popFront(); }
-        @property size_t length() const { return arr.length; }
-    }
-    static assert(isInputRange!TestInputRangeWithLength);
-    static assert(hasLength!TestInputRangeWithLength);
-    TestInputRangeWithLength inputWithLength;
-    static assert(isInputRange!(typeof(randomSample(inputWithLength, 5))));
-    static assert(isInputRange!(typeof(randomSample(inputWithLength, 5, gen))));
+        uint i = 0;
+        foreach(e; randomSample(a, a.length))
+        {
+            assert(e == i);
+            ++i;
+        }
+        assert(i == a.length);
 
-    //int[] a = [ 0, 1, 2 ];
+        i = 0;
+        foreach(e; randomSample(TestInputRange(), 17, 17))
+        {
+            assert(e == i);
+            ++i;
+        }
+        assert(i == 17);
+    }
+
+
+    // Check length properties of random samples.
     assert(randomSample(a, 5).length == 5);
     assert(randomSample(a, 5, 10).length == 5);
     assert(randomSample(a, 5, gen).length == 5);
-    uint i;
-    foreach (e; randomSample(randomCover(a, rndGen), 5))
+    assert(randomSample(a, 5, 10, gen).length == 5);
+    assert(randomSample(TestInputRange(), 5, 10).length == 5);
+    assert(randomSample(TestInputRange(), 5, 10, gen).length == 5);
+
+    // ... and emptiness!
+    assert(randomSample(a, 0).empty);
+    assert(randomSample(a, 0, 5).empty);
+    assert(randomSample(a, 0, gen).empty);
+    assert(randomSample(a, 0, 5, gen).empty);
+    assert(randomSample(TestInputRange(), 0, 10).empty);
+    assert(randomSample(TestInputRange(), 0, 10, gen).empty);
+
+    /* Test that the (lazy) evaluation of random samples works correctly.
+     *
+     * We cover 2 different cases: a sample where the ratio of sample points
+     * to total points is greater than the threshold for using Algorithm, and
+     * one where the ratio is small enough (< 1/13) for Algorithm D to be used.
+     *
+     * For each, we also cover the case with and without a specified RNG.
+     */
     {
-        ++i;
-        //writeln(e);
+        // Small sample/source ratio, no specified RNG.
+        uint i = 0;
+        foreach (e; randomSample(randomCover(a, rndGen), 5))
+        {
+            ++i;
+        }
+        assert(i == 5);
+
+        // Small sample/source ratio, specified RNG.
+        i = 0;
+        foreach(e; randomSample(randomCover(a, rndGen), 5, gen))
+        {
+            ++i;
+        }
+        assert(i == 5);
+
+        // Large sample/source ratio, no specified RNG.
+        i = 0;
+        foreach(e; randomSample(TestInputRange(), 123, 123_456))
+        {
+            ++i;
+        }
+        assert(i == 123);
+
+        // Large sample/source ratio, specified RNG.
+        i = 0;
+        foreach(e; randomSample(TestInputRange(), 123, 123_456, gen))
+        {
+            ++i;
+        }
+        assert(i == 123);
+
+        /* Sample/source ratio large enough to start with Algorithm D,
+         * small enough to switch to Algorithm A.
+         */
+        i = 0;
+        foreach(e; randomSample(TestInputRange(), 10, 131))
+        {
+            ++i;
+        }
+        assert(i == 10);
     }
-    assert(i == 5);
+
+    // Test that the .index property works correctly
+    {
+        auto sample1 = randomSample(TestInputRange(), 654, 654_321);
+        for(; !sample1.empty; sample1.popFront())
+        {
+            assert(sample1.front == sample1.index());
+        }
+
+        auto sample2 = randomSample(TestInputRange(), 654, 654_321, gen);
+        for(; !sample2.empty; sample2.popFront())
+        {
+            assert(sample2.front == sample2.index());
+        }
+
+        /* These next 2 tests will fail because of Issue 10322.  They
+         * should be restored to test that this bug has been fixed.
+         * http://d.puremagic.com/issues/show_bug.cgi?id=10322
+         */
+        version(none)
+        {
+            auto sample3 = randomSample(TestInputRange(), 654, 654_321);
+            for(; !sample3.empty; sample3.popFront())
+            {
+                assert(sample3.index() == sample3.front);
+            }
+
+            auto sample4 = randomSample(TestInputRange(), 654, 654_321, gen);
+            for(; !sample4.empty; sample4.popFront())
+            {
+                assert(sample4.index() == sample4.front);
+            }
+        }
+    }
+
+    /* Odd corner-cases: RandomSample has 2 constructors that are not called
+     * by the randomSample() helper functions, but that can be used if the
+     * constructor is called directly.  These cover the case of the user
+     * specifying input but not input length.
+     */
+    {
+        auto input1 = TestInputRange().takeExactly(456_789);
+        static assert(hasLength!(typeof(input1)));
+        auto sample1 = RandomSample!(typeof(input1), void)(input1, 789);
+        static assert(isInputRange!(typeof(sample1)));
+        static assert(!isForwardRange!(typeof(sample1)));
+        assert(sample1.length == 789);
+        assert(sample1._available == 456_789);
+        uint i = 0;
+        for(; !sample1.empty; sample1.popFront())
+        {
+            assert(sample1.front == sample1.index());
+            ++i;
+        }
+        assert(i == 789);
+
+        auto input2 = TestInputRange().takeExactly(456_789);
+        static assert(hasLength!(typeof(input2)));
+        auto sample2 = RandomSample!(typeof(input2), typeof(gen))(input2, 789, gen);
+        static assert(isInputRange!(typeof(sample2)));
+        static assert(!isForwardRange!(typeof(sample2)));
+        assert(sample2.length == 789);
+        assert(sample2._available == 456_789);
+        i = 0;
+        for(; !sample2.empty; sample2.popFront())
+        {
+            assert(sample2.front == sample2.index());
+            ++i;
+        }
+        assert(i == 789);
+    }
+
+    /* Test that the save property works where input is a forward range.
+     * Commented out for now as it will fail with the present incorrect
+     * .save method of RandomSample.  Remove the version(none) to test
+     * fixes (but leave the braces in place:-).
+     */
+    version(none)
+    {
+        auto sample1 = randomSample(a, 5);
+        auto save1 = sample1.save;
+        assert(sample1.array() == save1.array());
+
+        auto sample2 = randomSample(a, 5, gen);
+        auto save2 = sample2.save;
+        assert(sample2.array() == save2.array());
+    }
 
     // Bugzilla 8314
     {

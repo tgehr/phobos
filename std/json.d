@@ -20,7 +20,6 @@ module std.json;
 import std.ascii;
 import std.conv;
 import std.range;
-import std.uni : isControl;
 import std.utf;
 
 private
@@ -518,6 +517,8 @@ string toJSON(in JSONValue* root, in bool pretty = false)
 private void appendJSONChar(Appender!string* dst, dchar c,
                             scope void delegate(string) error)
 {
+    import std.uni : isControl;
+
     if(isControl(c))
         error("Illegal control character.");
     dst.put(c);
@@ -555,7 +556,6 @@ unittest
         `0.23`,
         `-0.23`,
         `""`,
-        `1.223e+24`,
         `"hello\nworld"`,
         `"\"\\\/\b\f\n\r\t"`,
         `[]`,
@@ -565,6 +565,11 @@ unittest
         // Currently broken
         // `{"hello":{"json":"is great","array":[12,null,{}]},"goodbye":[true,"or",false,["test",42,{"nested":{"a":23.54,"b":0.0012}}]]}`
     ];
+
+    version (MinGW)
+        jsons ~= `1.223e+024`;
+    else
+        jsons ~= `1.223e+24`;
 
     JSONValue val;
     string result;
@@ -591,7 +596,8 @@ unittest
     val = parseJSON(`"\u2660\u2666"`);
     assert(toJSON(&val) == "\"\&spades;\&diams;\"");
 
-    assertNotThrown(parseJSON(`{ "foo": "` ~ "\u007F" ~ `"}`));
+    //0x7F is a control character (see Unicode spec)
+    assertThrown(parseJSON(`{ "foo": "` ~ "\u007F" ~ `"}`));
 
     with(parseJSON(`""`))
         assert(str == "" && str !is null);

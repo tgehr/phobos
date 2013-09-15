@@ -1459,7 +1459,7 @@ if (isBidirectionalRange!(Unqual!Range))
     }
     else
     {
-        static struct Result
+        static struct Result()
         {
             private alias Unqual!Range R;
 
@@ -1556,7 +1556,7 @@ if (isBidirectionalRange!(Unqual!Range))
             }
         }
 
-        return Result(r);
+        return Result!()(r);
     }
 }
 
@@ -1887,7 +1887,7 @@ unittest
     assert(s1[0..0].empty);
     assert(s1[3..3].empty);
     // assert(s1[$ .. $].empty);
-    assert(s1[s1.opDollar() .. s1.opDollar()].empty);
+    assert(s1[s1.opDollar .. s1.opDollar].empty);
 
     auto s2 = stride(arr, 2);
     assert(equal(s2[0..2], [1,3]));
@@ -1897,7 +1897,7 @@ unittest
     assert(s2[0..0].empty);
     assert(s2[3..3].empty);
     // assert(s2[$ .. $].empty);
-    assert(s2[s2.opDollar() .. s2.opDollar()].empty);
+    assert(s2[s2.opDollar .. s2.opDollar].empty);
 
     // Test fix for Bug 5035
     auto m = [1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4]; // 3 rows, 4 columns
@@ -2944,6 +2944,28 @@ if (isInputRange!R)
                 {
                     return Result(_input.save, _n);
                 }
+
+            static if (hasMobileElements!R)
+            {
+                auto moveFront()
+                {
+                    assert(!empty,
+                        "Attempting to move the front of an empty "
+                        ~ typeof(this).stringof);
+                    return .moveFront(_input);
+                }
+            }
+
+            static if (hasAssignableElements!R)
+            {
+                @property auto ref front(ElementType!R v)
+                {
+                    assert(!empty,
+                        "Attempting to assign to the front of an empty "
+                        ~ typeof(this).stringof);
+                    return _input.front = v;
+                }
+            }
         }
 
         return Result(range, n);
@@ -3000,11 +3022,31 @@ unittest
 
     foreach(DummyType; AllDummyRanges)
     {
-        DummyType dummy;
-        auto t = takeExactly(dummy, 5);
+        {
+            DummyType dummy;
+            auto t = takeExactly(dummy, 5);
 
-        //Test that takeExactly doesn't wrap the result of takeExactly.
-        assert(takeExactly(t, 4) == takeExactly(dummy, 4));
+            //Test that takeExactly doesn't wrap the result of takeExactly.
+            assert(takeExactly(t, 4) == takeExactly(dummy, 4));
+        }
+
+        static if(hasMobileElements!DummyType)
+        {
+            {
+                auto t = takeExactly(DummyType.init, 4);
+                assert(t.moveFront() == 1);
+                assert(equal(t, [1, 2, 3, 4]));
+            }
+        }
+
+        static if(hasAssignableElements!DummyType)
+        {
+            {
+                auto t = takeExactly(DummyType.init, 4);
+                t.front = 9;
+                assert(equal(t, [9, 2, 3, 4]));
+            }
+        }
     }
 }
 
@@ -3821,11 +3863,7 @@ struct Cycle(Range)
         }
 
         private static struct DollarToken {}
-
-        DollarToken opDollar()
-        {
-            return DollarToken.init;
-        }
+        enum opDollar = DollarToken.init;
 
         auto opSlice(size_t i, size_t j)
         {
@@ -4625,7 +4663,7 @@ private string lockstepMixin(Ranges...)(bool withIndex)
 
     foreach (idx, Range; Ranges)
     {
-        params ~= format("ref ElementType!(Ranges[%s])", idx);
+        params ~= format("%sElementType!(Ranges[%s])", hasLvalueElements!Range ? "ref " : "", idx);
         emptyChecks ~= format("!ranges[%s].empty", idx);
         dgArgs ~= format("ranges[%s].front", idx);
         popFronts ~= format("ranges[%s].popFront();", idx);
@@ -4814,6 +4852,9 @@ unittest
     auto c = chain(foo2, bar2);
 
     foreach(f, b; lockstep(c, c)) {}
+
+    // Regression 10468
+    foreach (x, y; lockstep(iota(0, 10), iota(0, 10))) { }
 }
 
 /**
@@ -5078,14 +5119,15 @@ if ((isIntegral!(CommonType!(B, E)) || isPointer!(CommonType!(B, E)))
         && isIntegral!S)
 {
     alias CommonType!(Unqual!B, Unqual!E) Value;
+    alias Unqual!S StepType;
     alias typeof(unsigned((end - begin) / step)) IndexType;
 
     static struct Result
     {
         private Value current, pastLast;
-        private S step;
+        private StepType step;
 
-        this(Value current, Value pastLast, S step)
+        this(Value current, Value pastLast, StepType step)
         {
             if ((current < pastLast && step >= 0) ||
                     (current > pastLast && step <= 0))
@@ -5236,7 +5278,7 @@ auto iota(E)(E end)
 auto iota(B, E, S)(B begin, E end, S step)
 if (isFloatingPoint!(CommonType!(B, E, S)))
 {
-    alias CommonType!(B, E, S) Value;
+    alias Unqual!(CommonType!(B, E, S)) Value;
     static struct Result
     {
         private Value start, step;

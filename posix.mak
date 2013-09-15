@@ -27,25 +27,25 @@ QUIET:=@
 OS:=
 uname_S:=$(shell uname -s)
 ifeq (Darwin,$(uname_S))
-	OS:=osx
+     OS:=osx
 endif
 ifeq (Linux,$(uname_S))
-	OS:=linux
+     OS:=linux
 endif
 ifeq (FreeBSD,$(uname_S))
-	OS:=freebsd
+     OS:=freebsd
 endif
 ifeq (OpenBSD,$(uname_S))
-	OS:=openbsd
+     OS:=openbsd
 endif
 ifeq (Solaris,$(uname_S))
-	OS:=solaris
+     OS:=solaris
 endif
 ifeq (SunOS,$(uname_S))
-	OS:=solaris
+     OS:=solaris
 endif
 ifeq (,$(OS))
-	$(error Unrecognized or unsupported OS for uname: $(uname_S))
+     $(error Unrecognized or unsupported OS for uname: $(uname_S))
 endif
 
 MODEL:=default
@@ -118,7 +118,7 @@ ifneq (,$(filter cc% gcc% clang% icc% egcc%, $(CC)))
 endif
 
 # Set DFLAGS
-DFLAGS := -I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS) -w -d -property $(MODEL_FLAG) $(PIC)
+DFLAGS := -I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS) -w -d $(MODEL_FLAG) $(PIC)
 ifeq ($(BUILD),debug)
 	DFLAGS += -g -debug
 else
@@ -154,8 +154,8 @@ DDOC=$(DMD)
 VERSION=../dmd/VERSION
 
 # Set SONAME, the name of the shared library.
-# The awk script will produce the last 2 digits of the version string, i.e. 2.063 produces 63
-SONAME = libphobos2.so.0.$(shell awk -F. '{ print $$NF + 0 }' $(VERSION))
+# The awk script will return the second group without leading zeros of the version string, i.e. 2.063.2 produces 63
+SONAME = libphobos2.so.0.$(shell awk -F. '{ print $$2 + 0 }' $(VERSION))
 
 # Set LIB, the ultimate target
 ifeq (,$(findstring win,$(OS)))
@@ -202,7 +202,7 @@ EXTRA_MODULES += $(EXTRA_DOCUMENTABLES) $(addprefix			\
 	std/internal/digest/, sha_SSSE3 ) $(addprefix \
 	std/internal/math/, biguintcore biguintnoasm biguintx86	\
 	gammafunction errorfunction) $(addprefix std/internal/, \
-	processinit uni uni_tab)
+	processinit uni uni_tab unicode_tables)
 
 # Aggregate all D modules relevant to this build
 D_MODULES = crc32 $(STD_MODULES) $(EXTRA_MODULES) $(STD_NET_MODULES) $(STD_DIGEST_MODULES)

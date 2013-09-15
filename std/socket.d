@@ -61,7 +61,7 @@ version(Windows)
     private alias std.c.windows.winsock.timeval _ctimeval;
     private alias std.c.windows.winsock.linger _clinger;
 
-    enum socket_t : SOCKET { INVALID_SOCKET };
+    enum socket_t : SOCKET { INVALID_SOCKET }
     private const int _SOCKET_ERROR = SOCKET_ERROR;
 
 
@@ -2925,7 +2925,7 @@ public:
         else version (Posix)
         {
             _ctimeval tv;
-            tv.tv_sec  = to!(typeof(tv.tv_sec ))(value.total!"seconds"());
+            tv.tv_sec  = to!(typeof(tv.tv_sec ))(value.total!"seconds");
             tv.tv_usec = to!(typeof(tv.tv_usec))(value.fracSec.usecs);
             setOption(level, option, (&tv)[0 .. 1]);
         }

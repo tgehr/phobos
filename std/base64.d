@@ -1430,6 +1430,7 @@ template Base64Impl(char Map62th, char Map63th, char Padding = '=')
  */
 class Base64Exception : Exception
 {
+    @safe pure nothrow
     this(string s, string fn = __FILE__, size_t ln = __LINE__)
     {
         super(s, fn, ln);
@@ -1576,6 +1577,9 @@ unittest
         assert(tv["foobar"] == b.data); a.clear(); b.clear();
     }
 
+    // @@@9543@@@ These tests were disabled because they actually relied on the input range having length.
+    // The implementation (currently) doesn't support encoding/decoding from a length-less source.
+    version(none)
     { // with InputRange
         // InputRange to ubyte[] or char[]
         auto encoded = Base64.encode(map!(to!(ubyte))(["20", "251", "156", "3", "217", "126"]));

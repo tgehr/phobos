@@ -288,6 +288,11 @@ version(unittest)
 
         shared(immutable(Inner) delegate(ref double, scope string) const shared @trusted nothrow) attrDeleg;
     }
+
+    private enum QualifiedEnum
+    {
+        a = 42
+    }
 }
 
 private template fullyQualifiedNameImplForSymbols(alias T)
@@ -452,11 +457,11 @@ private template fullyQualifiedNameImplForTypes(T,
     {
         enum fullyQualifiedNameImplForTypes = "dstring";
     }
-    else static if (isBasicType!T || is(T == enum))
+    else static if (isBasicType!T && !is(T == enum))
     {
         enum fullyQualifiedNameImplForTypes = chain!((Unqual!T).stringof);
     }
-    else static if (isAggregateType!T)
+    else static if (isAggregateType!T || is(T == enum))
     {
         enum fullyQualifiedNameImplForTypes = chain!(fullyQualifiedNameImplForSymbols!T);
     }
@@ -540,6 +545,8 @@ unittest
 
         // Basic qualified name
         static assert(fqn!(Inner) == inner_name);
+        static assert(fqn!(QualifiedEnum) == "std.traits.QualifiedEnum"); // type
+        static assert(fqn!(QualifiedEnum.a) == "std.traits.QualifiedEnum.a"); // symbol
 
         // Array types
         static assert(fqn!(typeof(array)) == format("%s[]", inner_name));
@@ -829,18 +836,18 @@ static assert([ParameterIdentifierTuple!foo] == ["num", "name"]);
 template ParameterIdentifierTuple(func...)
     if (func.length == 1 && isCallable!func)
 {
-    static if (is(typeof(func[0]) PT == __parameters))
+    static if (is(FunctionTypeOf!func PT == __parameters))
     {
         template Get(size_t i)
         {
-            enum Get = __traits(identifier, PT[i..i+1]);
-        }
-    }
-    else static if (is(FunctionTypeOf!func PT == __parameters))
-    {
-        template Get(size_t i)
-        {
-            enum Get = "";
+            static if (!isFunctionPointer!func && !isDelegate!func)
+            {
+                enum Get = __traits(identifier, PT[i..i+1]);
+            }
+            else
+            {
+                enum Get = "";
+            }
         }
     }
     else
@@ -884,6 +891,17 @@ unittest
     // might be changed in the future?
     void delegate(int num, string name, int[long] aa) dg;
     static assert([PIT!dg] == ["", "", ""]);
+
+    interface Test
+    {
+        @property string getter();
+        @property void setter(int a);
+        Test method(int a, long b, string c);
+    }
+    static assert([PIT!(Test.getter)] == []);
+    static assert([PIT!(Test.setter)] == ["a"]);
+    static assert([PIT!(Test.method)] == ["a", "b", "c"]);
+
 /+
     // depends on internal
     void baw(int, string, int[]){}
@@ -5389,10 +5407,11 @@ template Unqual(T)
     }
     else // workaround
     {
-             static if (is(T U == shared(const U))) alias U Unqual;
+             static if (is(T U == shared(inout U))) alias U Unqual;
+        else static if (is(T U == shared(const U))) alias U Unqual;
+        else static if (is(T U ==        inout U )) alias U Unqual;
         else static if (is(T U ==        const U )) alias U Unqual;
         else static if (is(T U ==    immutable U )) alias U Unqual;
-        else static if (is(T U ==        inout U )) alias U Unqual;
         else static if (is(T U ==       shared U )) alias U Unqual;
         else                                        alias T Unqual;
     }
@@ -5400,12 +5419,13 @@ template Unqual(T)
 
 unittest
 {
-    static assert(is(Unqual!int == int));
-    static assert(is(Unqual!(const int) == int));
-    static assert(is(Unqual!(immutable int) == int));
-    static assert(is(Unqual!(inout int) == int));
-    static assert(is(Unqual!(shared int) == int));
-    static assert(is(Unqual!(shared(const int)) == int));
+    static assert(is(Unqual!(             int) == int));
+    static assert(is(Unqual!(       const int) == int));
+    static assert(is(Unqual!(       inout int) == int));
+    static assert(is(Unqual!(   immutable int) == int));
+    static assert(is(Unqual!(      shared int) == int));
+    static assert(is(Unqual!(shared const int) == int));
+    static assert(is(Unqual!(shared inout int) == int));
     alias immutable(int[]) ImmIntArr;
     static assert(is(Unqual!ImmIntArr == immutable(int)[]));
 }
@@ -5413,7 +5433,9 @@ unittest
 // [For internal use]
 private template ModifyTypePreservingSTC(alias Modifier, T)
 {
-         static if (is(T U == shared(const U))) alias shared(const Modifier!U) ModifyTypePreservingSTC;
+         static if (is(T U == shared(inout U))) alias shared(inout Modifier!U) ModifyTypePreservingSTC;
+    else static if (is(T U == shared(const U))) alias shared(const Modifier!U) ModifyTypePreservingSTC;
+    else static if (is(T U ==        inout U )) alias        inout(Modifier!U) ModifyTypePreservingSTC;
     else static if (is(T U ==        const U )) alias        const(Modifier!U) ModifyTypePreservingSTC;
     else static if (is(T U ==    immutable U )) alias    immutable(Modifier!U) ModifyTypePreservingSTC;
     else static if (is(T U ==       shared U )) alias       shared(Modifier!U) ModifyTypePreservingSTC;
@@ -5422,10 +5444,13 @@ private template ModifyTypePreservingSTC(alias Modifier, T)
 
 unittest
 {
-    static assert(is(ModifyTypePreservingSTC!(Intify, const real) == const int));
-    static assert(is(ModifyTypePreservingSTC!(Intify, immutable real) == immutable int));
-    static assert(is(ModifyTypePreservingSTC!(Intify, shared real) == shared int));
-    static assert(is(ModifyTypePreservingSTC!(Intify, shared(const real)) == shared(const int)));
+    static assert(is(ModifyTypePreservingSTC!(Intify,              real) ==              int));
+    static assert(is(ModifyTypePreservingSTC!(Intify,       shared real) ==       shared int));
+    static assert(is(ModifyTypePreservingSTC!(Intify,    immutable real) ==    immutable int));
+    static assert(is(ModifyTypePreservingSTC!(Intify,        const real) ==        const int));
+    static assert(is(ModifyTypePreservingSTC!(Intify,        inout real) ==        inout int));
+    static assert(is(ModifyTypePreservingSTC!(Intify, shared const real) == shared const int));
+    static assert(is(ModifyTypePreservingSTC!(Intify, shared inout real) == shared inout int));
 }
 version (unittest) private template Intify(T) { alias int Intify; }
 
@@ -5645,72 +5670,14 @@ unittest
     static assert(is(S3 == immutable(int)));
 }
 
-/**
- * Returns the corresponding unsigned value for $(D x), e.g. if $(D x)
- * has type $(D int), returns $(D cast(uint) x). The advantage
- * compared to the cast is that you do not need to rewrite the cast if
- * $(D x) later changes type to e.g. $(D long).
- */
-auto unsigned(T)(T x) if (isIntegral!T)
-{
-         static if (is(Unqual!T == byte )) return cast(ubyte ) x;
-    else static if (is(Unqual!T == short)) return cast(ushort) x;
-    else static if (is(Unqual!T == int  )) return cast(uint  ) x;
-    else static if (is(Unqual!T == long )) return cast(ulong ) x;
-    else
-    {
-        static assert(T.min == 0, "Bug in either unsigned or isIntegral");
-        return cast(Unqual!T) x;
-    }
-}
 
-unittest
-{
-    foreach(T; TypeTuple!(byte, ubyte))
-    {
-        static assert(is(typeof(unsigned(cast(T)1)) == ubyte));
-        static assert(is(typeof(unsigned(cast(const T)1)) == ubyte));
-        static assert(is(typeof(unsigned(cast(immutable T)1)) == ubyte));
-    }
+// Remove import when unsigned is removed.
+import std.conv;
 
-    foreach(T; TypeTuple!(short, ushort))
-    {
-        static assert(is(typeof(unsigned(cast(T)1)) == ushort));
-        static assert(is(typeof(unsigned(cast(const T)1)) == ushort));
-        static assert(is(typeof(unsigned(cast(immutable T)1)) == ushort));
-    }
+// Purposefully undocumented. Will be removed in June 2014.
+deprecated("unsigned has been moved to std.conv. Please adjust your imports accordingly.")
+alias std.conv.unsigned unsigned;
 
-    foreach(T; TypeTuple!(int, uint))
-    {
-        static assert(is(typeof(unsigned(cast(T)1)) == uint));
-        static assert(is(typeof(unsigned(cast(const T)1)) == uint));
-        static assert(is(typeof(unsigned(cast(immutable T)1)) == uint));
-    }
-
-    foreach(T; TypeTuple!(long, ulong))
-    {
-        static assert(is(typeof(unsigned(cast(T)1)) == ulong));
-        static assert(is(typeof(unsigned(cast(const T)1)) == ulong));
-        static assert(is(typeof(unsigned(cast(immutable T)1)) == ulong));
-    }
-}
-
-auto unsigned(T)(T x) if (isSomeChar!T)
-{
-    // All characters are unsigned
-    static assert(T.min == 0);
-    return cast(Unqual!T) x;
-}
-
-unittest
-{
-    foreach(T; TypeTuple!(char, wchar, dchar))
-    {
-        static assert(is(typeof(unsigned(cast(T)'A')) == T));
-        static assert(is(typeof(unsigned(cast(const T)'A')) == T));
-        static assert(is(typeof(unsigned(cast(immutable T)'A')) == T));
-    }
-}
 
 /**
 Returns the most negative value of the numeric type T.
