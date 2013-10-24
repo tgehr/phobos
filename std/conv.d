@@ -3686,7 +3686,7 @@ T* emplace(T, Args...)(T* chunk, auto ref Args args)
         static assert(Args.length == 1);
         //static assert(0, T.stringof ~ " " ~ Args.stringof);
         // initialize();
-        *chunk = args[0];
+        args[0].move(*chunk);
     }
     return chunk;
 }

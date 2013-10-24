@@ -1595,7 +1595,9 @@ $(D &source == &target || !pointsTo(source, source))
 */
 void move(T)(ref T source, ref T target)
 {
-    assert(!pointsTo(source, source));
+    assert(!pointsTo(source, source),
+        "Value of type " ~ T.stringof
+        ~ " embeds a pointer to itself and cannot be moved.");
     static if (is(T == struct))
     {
         if (&source == &target) return;
