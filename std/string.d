@@ -24,11 +24,12 @@ Source:    $(PHOBOSSRC std/_string.d)
 module std.string;
 
 //debug=string;                 // uncomment to turn on debugging printf's
+debug(string) import core.stdc.stdio;
 
 import core.exception : RangeError, onRangeError;
 import core.vararg, core.stdc.stdlib, core.stdc.string,
     std.algorithm, std.ascii, std.conv, std.exception, std.format, std.functional,
-    std.range, std.regex, std.traits,
+    std.range, std.traits,
     std.typecons, std.typetuple, std.uni, std.utf;
 
 //Remove when repeat is finally removed. They're only here as part of the
@@ -61,7 +62,7 @@ class StringException : Exception
     this(string msg,
          string file = __FILE__,
          size_t line = __LINE__,
-         Throwable next = null)
+         Throwable next = null) @safe pure nothrow
     {
         super(msg, file, line, next);
     }
@@ -250,7 +251,7 @@ enum CaseSensitive { no, yes }
   +/
 ptrdiff_t indexOf(Char)(in Char[] s,
                       dchar c,
-                      CaseSensitive cs = CaseSensitive.yes) pure
+                      CaseSensitive cs = CaseSensitive.yes) @safe pure
     if (isSomeChar!Char)
 {
     if (cs == CaseSensitive.yes)
@@ -259,9 +260,10 @@ ptrdiff_t indexOf(Char)(in Char[] s,
         {
             if (std.ascii.isASCII(c) && !__ctfe)
             {                                               // Plain old ASCII
-                auto p = cast(char*)memchr(s.ptr, c, s.length);
+                auto trustedmemchr() @trusted { return cast(Char*)memchr(s.ptr, c, s.length); }
+                auto p = trustedmemchr();
                 if (p)
-                    return p - cast(char *)s;
+                    return p - s.ptr;
                 else
                     return -1;
             }
@@ -334,6 +336,71 @@ unittest
         assert(indexOf("hello\U00010143\u0100\U00010143"d, '\u0100', cs) == 6);
     }
     });
+}
+
+/++
+    Returns the index of the first occurence of $(D c) in $(D s) with respect
+    to the start index $(D startIdx). If $(D c) is not found, then $(D -1) is
+    returned. If $(D c) is found the value of the returned index is at least
+    $(D startIdx). $(D startIdx) represents a codeunit index in $(D s). If the
+    sequence starting at $(D startIdx) does not represent a well formed codepoint,
+    then a $(XREF utf,UTFException) may be thrown.
+
+    $(D cs) indicates whether the comparisons are case sensitive.
+  +/
+ptrdiff_t indexOf(Char)(const(Char)[] s, dchar c, const size_t startIdx,
+        CaseSensitive cs = CaseSensitive.yes) @safe pure
+    if (isSomeChar!Char)
+{
+    if (startIdx < s.length)
+    {
+        ptrdiff_t foundIdx = indexOf(s[startIdx .. $], c, cs);
+        if (foundIdx != -1)
+        {
+            return foundIdx + cast(ptrdiff_t)startIdx;
+        }
+    }
+    return -1;
+}
+
+unittest
+{
+    debug(string) printf("string.indexOf(startIdx).unittest\n");
+
+    foreach (S; TypeTuple!(string, wstring, dstring))
+    {
+        assert(indexOf(cast(S)null, cast(dchar)'a', 1) == -1);
+        assert(indexOf(to!S("def"), cast(dchar)'a', 1) == -1);
+        assert(indexOf(to!S("abba"), cast(dchar)'a', 1) == 3);
+        assert(indexOf(to!S("def"), cast(dchar)'f', 1) == 2);
+
+        assert((to!S("def")).indexOf(cast(dchar)'a', 1,
+                CaseSensitive.no) == -1);
+        assert(indexOf(to!S("def"), cast(dchar)'a', 1,
+                CaseSensitive.no) == -1);
+        assert(indexOf(to!S("def"), cast(dchar)'a', 12,
+                CaseSensitive.no) == -1);
+        assert(indexOf(to!S("AbbA"), cast(dchar)'a', 2,
+                CaseSensitive.no) == 3);
+        assert(indexOf(to!S("def"), cast(dchar)'F', 2, CaseSensitive.no) == 2);
+
+        S sPlts = "Mars: the fourth Rock (Planet) from the Sun.";
+        assert(indexOf("def", cast(char)'f', cast(uint)2,
+            CaseSensitive.no) == 2);
+        assert(indexOf(sPlts, cast(char)'P', 12, CaseSensitive.no) == 23);
+        assert(indexOf(sPlts, cast(char)'R', cast(ulong)1,
+            CaseSensitive.no) == 2);
+    }
+
+    foreach(cs; EnumMembers!CaseSensitive)
+    {
+        assert(indexOf("hello\U00010143\u0100\U00010143", '\u0100', 2, cs)
+            == 9);
+        assert(indexOf("hello\U00010143\u0100\U00010143"w, '\u0100', 3, cs)
+            == 7);
+        assert(indexOf("hello\U00010143\u0100\U00010143"d, '\u0100', 6, cs)
+            == 6);
+    }
 }
 
 /++
@@ -412,6 +479,88 @@ unittest
     });
 }
 
+/++
+    Returns the index of the first occurence of $(D sub) in $(D s) with
+    respect to the start index $(D startIdx). If $(D sub) is not found, then
+    $(D -1) is returned. If $(D sub) is found the value of the returned index
+    is at least $(D startIdx). $(D startIdx) represents a codeunit index in
+    $(D s). If the sequence starting at $(D startIdx) does not represent a well
+    formed codepoint, then a $(XREF utf,UTFException) may be thrown.
+
+    $(D cs) indicates whether the comparisons are case sensitive.
+  +/
+ptrdiff_t indexOf(Char1, Char2)(const(Char1)[] s, const(Char2)[] sub,
+        const size_t startIdx, CaseSensitive cs = CaseSensitive.yes)
+    if (isSomeChar!Char1 && isSomeChar!Char2)
+{
+    if (startIdx < s.length)
+    {
+        ptrdiff_t foundIdx = indexOf(s[startIdx .. $], sub, cs);
+        if (foundIdx != -1)
+        {
+            return foundIdx + cast(ptrdiff_t)startIdx;
+        }
+    }
+    return -1;
+}
+
+unittest
+{
+    debug(string) printf("string.indexOf(startIdx).unittest\n");
+
+    foreach(S; TypeTuple!(string, wstring, dstring))
+    {
+        foreach(T; TypeTuple!(string, wstring, dstring))
+        {
+            assert(indexOf(cast(S)null, to!T("a"), 1337) == -1);
+            assert(indexOf(to!S("def"), to!T("a"), 0) == -1);
+            assert(indexOf(to!S("abba"), to!T("a"), 2) == 3);
+            assert(indexOf(to!S("def"), to!T("f"), 1) == 2);
+            assert(indexOf(to!S("dfefffg"), to!T("fff"), 1) == 3);
+            assert(indexOf(to!S("dfeffgfff"), to!T("fff"), 5) == 6);
+
+            assert(indexOf(to!S("dfeffgfff"), to!T("a"), 1, CaseSensitive.no) == -1);
+            assert(indexOf(to!S("def"), to!T("a"), 2, CaseSensitive.no) == -1);
+            assert(indexOf(to!S("abba"), to!T("a"), 3, CaseSensitive.no) == 3);
+            assert(indexOf(to!S("def"), to!T("f"), 1, CaseSensitive.no) == 2);
+            assert(indexOf(to!S("dfefffg"), to!T("fff"), 2, CaseSensitive.no) == 3);
+            assert(indexOf(to!S("dfeffgfff"), to!T("fff"), 4, CaseSensitive.no) == 6);
+            assert(indexOf(to!S("dfeffgffföä"), to!T("öä"), 9, CaseSensitive.no) == 9,
+                to!string(indexOf(to!S("dfeffgffföä"), to!T("öä"), 9, CaseSensitive.no))
+                ~ " " ~ S.stringof ~ " " ~ T.stringof);
+
+            S sPlts = "Mars: the fourth Rock (Planet) from the Sun.";
+            S sMars = "Who\'s \'My Favorite Maritian?\'";
+
+            assert(indexOf(sMars, to!T("MY fAVe"), 10,
+                CaseSensitive.no) == -1);
+            assert(indexOf(sMars, to!T("mY fAVOriTe"), 4, CaseSensitive.no) == 7);
+            assert(indexOf(sPlts, to!T("mArS:"), 0, CaseSensitive.no) == 0);
+            assert(indexOf(sPlts, to!T("rOcK"), 12, CaseSensitive.no) == 17);
+            assert(indexOf(sPlts, to!T("Un."), 32, CaseSensitive.no) == 41);
+            assert(indexOf(sPlts, to!T(sPlts), 0, CaseSensitive.no) == 0);
+
+            assert(indexOf("\u0100", to!T("\u0100"), 0, CaseSensitive.no) == 0);
+
+            // Thanks to Carlos Santander B. and zwang
+            assert(indexOf("sus mejores cortesanos. Se embarcaron en el puerto de Dubai y",
+                           to!T("page-break-before"), 10, CaseSensitive.no) == -1);
+
+            // In order for indexOf with and without index to be consistent
+            assert(indexOf(to!S(""), to!T("")) == indexOf(to!S(""), to!T(""), 0));
+        }
+
+        foreach(cs; EnumMembers!CaseSensitive)
+        {
+            assert(indexOf("hello\U00010143\u0100\U00010143", to!S("\u0100"),
+                3, cs) == 9);
+            assert(indexOf("hello\U00010143\u0100\U00010143"w, to!S("\u0100"),
+                3, cs) == 7);
+            assert(indexOf("hello\U00010143\u0100\U00010143"d, to!S("\u0100"),
+                3, cs) == 6);
+        }
+    }
+}
 
 /++
     Returns the index of the last occurence of $(D c) in $(D s). If $(D c)
@@ -516,6 +665,60 @@ unittest
         assert(lastIndexOf("\U00010143\u0100\U00010143hello"d, '\u0100', cs) == 1);
     }
     });
+}
+
+/++
+    Returns the index of the last occurence of $(D c) in $(D s). If $(D c) is
+    not found, then $(D -1) is returned. The $(D startIdx) slices $(D s) in
+    the following way $(D s[0 .. startIdx]). $(D startIdx) represents a
+    codeunit index in $(D s). If the sequence ending at $(D startIdx) does not
+    represent a well formed codepoint, then a $(XREF utf,UTFException) may be
+    thrown.
+
+    $(D cs) indicates whether the comparisons are case sensitive.
+  +/
+ptrdiff_t lastIndexOf(Char)(const(Char)[] s, dchar c, const size_t startIdx,
+        CaseSensitive cs = CaseSensitive.yes)
+    if (isSomeChar!Char)
+{
+    if (startIdx <= s.length)
+    {
+        return lastIndexOf(s[0u .. startIdx], c, cs);
+    }
+
+    return -1;
+}
+
+unittest
+{
+    debug(string) printf("string.lastIndexOf.unittest\n");
+
+    foreach(S; TypeTuple!(string, wstring, dstring))
+    {
+        assert(lastIndexOf(cast(S) null, 'a') == -1);
+        assert(lastIndexOf(to!S("def"), 'a') == -1);
+        assert(lastIndexOf(to!S("abba"), 'a', 3) == 0);
+        assert(lastIndexOf(to!S("deff"), 'f', 3) == 2);
+
+        assert(lastIndexOf(cast(S) null, 'a', CaseSensitive.no) == -1);
+        assert(lastIndexOf(to!S("def"), 'a', CaseSensitive.no) == -1);
+        assert(lastIndexOf(to!S("AbbAa"), 'a', to!ushort(4), CaseSensitive.no) == 3,
+                to!string(lastIndexOf(to!S("AbbAa"), 'a', 4, CaseSensitive.no)));
+        assert(lastIndexOf(to!S("def"), 'F', 3, CaseSensitive.no) == 2);
+
+        S sPlts = "Mars: the fourth Rock (Planet) from the Sun.";
+
+        assert(lastIndexOf(to!S("def"), 'f', 4, CaseSensitive.no) == -1);
+        assert(lastIndexOf(sPlts, 'M', sPlts.length -2, CaseSensitive.no) == 34);
+        assert(lastIndexOf(sPlts, 'S', sPlts.length -2, CaseSensitive.no) == 40);
+    }
+
+    foreach(cs; EnumMembers!CaseSensitive)
+    {
+        assert(lastIndexOf("\U00010143\u0100\U00010143hello", '\u0100', cs) == 4);
+        assert(lastIndexOf("\U00010143\u0100\U00010143hello"w, '\u0100', cs) == 2);
+        assert(lastIndexOf("\U00010143\u0100\U00010143hello"d, '\u0100', cs) == 1);
+    }
 }
 
 /++
@@ -650,6 +853,76 @@ unittest
     });
 }
 
+/++
+    Returns the index of the last occurence of $(D sub) in $(D s). If $(D sub)
+    is not found, then $(D -1) is returned. The $(D startIdx) slices $(D s) in
+    the following way $(D s[0 .. startIdx]). $(D startIdx) represents a
+    codeunit index in $(D s). If the sequence ending at $(D startIdx) does not
+    represent a well formed codepoint, then a $(XREF utf,UTFException) may be
+    thrown.
+
+    $(D cs) indicates whether the comparisons are case sensitive.
+  +/
+ptrdiff_t lastIndexOf(Char1, Char2)(const(Char1)[] s, const(Char2)[] sub,
+        const size_t startIdx, CaseSensitive cs = CaseSensitive.yes)
+    if (isSomeChar!Char1 && isSomeChar!Char2)
+{
+    if (startIdx <= s.length)
+    {
+        return lastIndexOf(s[0u .. startIdx], sub, cs);
+    }
+
+    return -1;
+}
+
+unittest
+{
+    debug(string) printf("string.lastIndexOf.unittest\n");
+
+    foreach(S; TypeTuple!(string, wstring, dstring))
+    {
+        foreach(T; TypeTuple!(string, wstring, dstring))
+        {
+            enum typeStr = S.stringof ~ " " ~ T.stringof;
+
+            assert(lastIndexOf(cast(S)null, to!T("a")) == -1, typeStr);
+            assert(lastIndexOf(to!S("abcdefcdef"), to!T("c"), 5) == 2, typeStr);
+            assert(lastIndexOf(to!S("abcdefcdef"), to!T("cd"), 3) == -1, typeStr);
+            assert(lastIndexOf(to!S("abcdefcdef"), to!T("ef"), 6) == 4, typeStr ~
+                format(" %u", lastIndexOf(to!S("abcdefcdef"), to!T("ef"), 6)));
+            assert(lastIndexOf(to!S("abcdefCdef"), to!T("c"), 5) == 2, typeStr);
+            assert(lastIndexOf(to!S("abcdefCdef"), to!T("cd"), 3) == -1, typeStr);
+            assert(lastIndexOf(to!S("abcdefcdefx"), to!T("x"), 1) == -1, typeStr);
+            assert(lastIndexOf(to!S("abcdefcdefxy"), to!T("xy"), 6) == -1, typeStr);
+            assert(lastIndexOf(to!S("abcdefcdef"), to!T(""), 8) == 8, typeStr);
+            assert(lastIndexOf(to!S("öafö"), to!T("ö"), 3) == 0, typeStr ~
+                    to!string(lastIndexOf(to!S("öafö"), to!T("ö"), 3))); //BUG 10472
+
+            assert(lastIndexOf(cast(S)null, to!T("a"), 1, CaseSensitive.no) == -1, typeStr);
+            assert(lastIndexOf(to!S("abcdefCdef"), to!T("c"), 5, CaseSensitive.no) == 2, typeStr);
+            assert(lastIndexOf(to!S("abcdefCdef"), to!T("cD"), 4, CaseSensitive.no) == 2, typeStr ~
+                " " ~ to!string(lastIndexOf(to!S("abcdefCdef"), to!T("cD"), 3, CaseSensitive.no)));
+            assert(lastIndexOf(to!S("abcdefcdef"), to!T("x"),3 , CaseSensitive.no) == -1, typeStr);
+            assert(lastIndexOf(to!S("abcdefcdefXY"), to!T("xy"), 4, CaseSensitive.no) == -1, typeStr);
+            assert(lastIndexOf(to!S("abcdefcdef"), to!T(""), 7, CaseSensitive.no) == 7, typeStr);
+
+            assert(lastIndexOf(to!S("abcdefcdef"), to!T("c"), 4, CaseSensitive.no) == 2, typeStr);
+            assert(lastIndexOf(to!S("abcdefcdef"), to!T("cd"), 4, CaseSensitive.no) == 2, typeStr);
+            assert(lastIndexOf(to!S("abcdefcdef"), to!T("def"), 6, CaseSensitive.no) == 3, typeStr);
+            assert(lastIndexOf(to!S(""), to!T(""), 0) == lastIndexOf(to!S(""), to!T("")), typeStr);
+        }
+
+        foreach(cs; EnumMembers!CaseSensitive)
+        {
+            enum csString = to!string(cs);
+
+            assert(lastIndexOf("\U00010143\u0100\U00010143hello", to!S("\u0100"), 6, cs) == 4, csString);
+            assert(lastIndexOf("\U00010143\u0100\U00010143hello"w, to!S("\u0100"), 6, cs) == 2, csString);
+            assert(lastIndexOf("\U00010143\u0100\U00010143hello"d, to!S("\u0100"), 3, cs) == 1, csString);
+        }
+    }
+}
+
 
 /**
  * Returns the representation of a string, which has the same type
@@ -721,7 +994,7 @@ unittest
   +/
 alias toLower = std.uni.toLower;
 /++
-    Converts $(D s) to lowercase (by performing Unicode lowercase mapping) in place.    
+    Converts $(D s) to lowercase (by performing Unicode lowercase mapping) in place.
     For a few characters string length may increase after the transformation,
     in such a case the function reallocates exactly once.
     If $(D s) does not have any uppercase characters, then $(D s) is unaltered.
@@ -825,7 +1098,7 @@ unittest
   +/
 enum KeepTerminator : bool { no, yes }
 /// ditto
-S[] splitLines(S)(S s, KeepTerminator keepTerm = KeepTerminator.no)
+S[] splitLines(S)(S s, KeepTerminator keepTerm = KeepTerminator.no) @safe pure
     if (isSomeString!S)
 {
     size_t iStart = 0;
@@ -926,7 +1199,7 @@ C[] stripLeft(C)(C[] str) @safe pure
 }
 
 ///
-unittest
+@safe pure unittest
 {
     assert(stripLeft("     hello world     ") ==
            "hello world     ");
@@ -944,7 +1217,7 @@ unittest
 /++
     Strips trailing whitespace.
   +/
-C[] stripRight(C)(C[] str)
+C[] stripRight(C)(C[] str) @safe pure
     if (isSomeChar!C)
 {
     foreach_reverse (i, dchar c; str)
@@ -957,7 +1230,7 @@ C[] stripRight(C)(C[] str)
 }
 
 ///
-unittest
+@safe pure unittest
 {
     assert(stripRight("     hello world     ") ==
            "     hello world");
@@ -975,14 +1248,14 @@ unittest
 /++
     Strips both leading and trailing whitespace.
   +/
-C[] strip(C)(C[] str)
+C[] strip(C)(C[] str) @safe pure
     if (isSomeChar!C)
 {
     return stripRight(stripLeft(str));
 }
 
 ///
-unittest
+@safe pure unittest
 {
     assert(strip("     hello world     ") ==
            "hello world");
@@ -1029,7 +1302,7 @@ unittest
     });
 }
 
-unittest
+@safe pure unittest
 {
     assertCTFEable!(
     {
@@ -1050,7 +1323,7 @@ unittest
     the end of $(D str). If $(D str) does not end with any of those characters,
     then it is returned unchanged.
   +/
-C[] chomp(C)(C[] str)
+C[] chomp(C)(C[] str) @safe pure
     if (isSomeChar!C)
 {
     if (str.empty)
@@ -1092,7 +1365,7 @@ C[] chomp(C)(C[] str)
 }
 
 /// Ditto
-C1[] chomp(C1, C2)(C1[] str, const(C2)[] delimiter)
+C1[] chomp(C1, C2)(C1[] str, const(C2)[] delimiter) @safe pure
     if (isSomeChar!C1 && isSomeChar!C2)
 {
     if (delimiter.empty)
@@ -1118,7 +1391,7 @@ C1[] chomp(C1, C2)(C1[] str, const(C2)[] delimiter)
 }
 
 ///
-unittest
+@safe pure unittest
 {
     assert(chomp(" hello world  \n\r") == " hello world  \n");
     assert(chomp(" hello world  \r\n") == " hello world  ");
@@ -1181,7 +1454,7 @@ unittest
     $(D delimiter) is returned. If it $(D str) does $(I not) start with
     $(D delimiter), then it is returned unchanged.
  +/
-C1[] chompPrefix(C1, C2)(C1[] str, C2[] delimiter)
+C1[] chompPrefix(C1, C2)(C1[] str, C2[] delimiter) @safe pure
     if (isSomeChar!C1 && isSomeChar!C2)
 {
     static if (is(Unqual!C1 == Unqual!C2))
@@ -1206,7 +1479,7 @@ C1[] chompPrefix(C1, C2)(C1[] str, C2[] delimiter)
 }
 
 ///
-unittest
+@safe pure unittest
 {
     assert(chompPrefix("hello world", "he") == "llo world");
     assert(chompPrefix("hello world", "hello w") == "orld");
@@ -1214,7 +1487,7 @@ unittest
     assert(chompPrefix("", "hello") == "");
 }
 
-unittest
+/* @safe */ pure unittest
 {
     assertCTFEable!(
     {
@@ -1238,7 +1511,7 @@ unittest
     ends with $(D "\r\n"), then both are removed. If $(D str) is empty, then
     then it is returned unchanged.
  +/
-S chop(S)(S str)
+S chop(S)(S str) @safe pure
     if (isSomeString!S)
 {
     if (str.empty)
@@ -1253,7 +1526,7 @@ S chop(S)(S str)
 }
 
 ///
-unittest
+@safe pure unittest
 {
     assert(chop("hello world") == "hello worl");
     assert(chop("hello world\n") == "hello world");
@@ -1289,7 +1562,7 @@ unittest
     is the character that will be used to fill up the space in the field that
     $(D s) doesn't fill.
   +/
-S leftJustify(S)(S s, size_t width, dchar fillChar = ' ') @trusted
+S leftJustify(S)(S s, size_t width, dchar fillChar = ' ') @trusted pure
     if (isSomeString!S)
 {
     alias typeof(s[0]) C;
@@ -1324,7 +1597,7 @@ S leftJustify(S)(S s, size_t width, dchar fillChar = ' ') @trusted
     is the character that will be used to fill up the space in the field that
     $(D s) doesn't fill.
   +/
-S rightJustify(S)(S s, size_t width, dchar fillChar = ' ') @trusted
+S rightJustify(S)(S s, size_t width, dchar fillChar = ' ') @trusted pure
     if (isSomeString!S)
 {
     alias typeof(s[0]) C;
@@ -1359,7 +1632,7 @@ S rightJustify(S)(S s, size_t width, dchar fillChar = ' ') @trusted
     is the character that will be used to fill up the space in the field that
     $(D s) doesn't fill.
   +/
-S center(S)(S s, size_t width, dchar fillChar = ' ') @trusted
+S center(S)(S s, size_t width, dchar fillChar = ' ') @trusted pure
     if (isSomeString!S)
 {
     alias typeof(s[0]) C;
@@ -1675,14 +1948,16 @@ unittest
   +/
 C1[] translate(C1, C2 = immutable char)(C1[] str,
                                         dchar[dchar] transTable,
-                                        const(C2)[] toRemove = null) @safe
+                                        const(C2)[] toRemove = null) @safe pure
     if (isSomeChar!C1 && isSomeChar!C2)
 {
-    return translateImpl(str, transTable, toRemove);
+    auto buffer = appender!(C1[])();
+    translateImpl(str, transTable, toRemove, buffer);
+    return buffer.data;
 }
 
 ///
-unittest
+@safe pure unittest
 {
     dchar[dchar] transTable1 = ['e' : '5', 'o' : '7', '5': 'q'];
     assert(translate("hello world", transTable1) == "h5ll7 w7rld");
@@ -1693,7 +1968,7 @@ unittest
     assert(translate("hello world", transTable2) == "h5llorange worangerld");
 }
 
-unittest
+/* @safe */ pure unittest
 {
     assertCTFEable!(
     {
@@ -1743,13 +2018,15 @@ unittest
 /++ Ditto +/
 C1[] translate(C1, S, C2 = immutable char)(C1[] str,
                                            S[dchar] transTable,
-                                           const(C2)[] toRemove = null) @safe
+                                           const(C2)[] toRemove = null) @safe pure
     if (isSomeChar!C1 && isSomeString!S && isSomeChar!C2)
 {
-    return translateImpl(str, transTable, toRemove);
+    auto buffer = appender!(C1[])();
+    translateImpl(str, transTable, toRemove, buffer);
+    return buffer.data;
 }
 
-unittest
+/* @safe */ pure unittest
 {
     assertCTFEable!(
     {
@@ -1798,12 +2075,58 @@ unittest
     });
 }
 
-private auto translateImpl(C1, T, C2)(C1[] str,
-                                      T transTable,
-                                      const(C2)[] toRemove) @trusted
-{
-    auto retval = appender!(C1[])();
+/++
+    This is an overload of $(D translate) which takes an existing buffer to write the contents to.
 
+    Params:
+        str        = The original string.
+        transTable = The AA indicating which characters to replace and what to
+                     replace them with.
+        toRemove   = The characters to remove from the string.
+        buffer     = An output range to write the contents to.
+  +/
+void translate(C1, C2 = immutable char, Buffer)(C1[] str,
+                                        dchar[dchar] transTable,
+                                        const(C2)[] toRemove,
+                                        Buffer buffer)
+    if (isSomeChar!C1 && isSomeChar!C2 && isOutputRange!(Buffer, C1))
+{
+    translateImpl(str, transTable, toRemove, buffer);
+}
+
+///
+@safe pure unittest
+{
+    dchar[dchar] transTable1 = ['e' : '5', 'o' : '7', '5': 'q'];
+    auto buffer = appender!(dchar[])();
+    translate("hello world", transTable1, null, buffer);
+    assert(buffer.data == "h5ll7 w7rld");
+
+    buffer.clear();
+    translate("hello world", transTable1, "low", buffer);
+    assert(buffer.data == "h5 rd");
+
+    buffer.clear();
+    string[dchar] transTable2 = ['e' : "5", 'o' : "orange"];
+    translate("hello world", transTable2, null, buffer);
+    assert(buffer.data == "h5llorange worangerld");
+}
+
+/++ Ditto +/
+void translate(C1, S, C2 = immutable char, Buffer)(C1[] str,
+                                                   S[dchar] transTable,
+                                                   const(C2)[] toRemove,
+                                                   Buffer buffer)
+    if (isSomeChar!C1 && isSomeString!S && isSomeChar!C2 && isOutputRange!(Buffer, S))
+{
+    translateImpl(str, transTable, toRemove, buffer);
+}
+
+private void translateImpl(C1, T, C2, Buffer)(C1[] str,
+                                      T transTable,
+                                      const(C2)[] toRemove,
+                                      Buffer buffer)
+{
     bool[dchar] removeTable;
 
     foreach (dchar c; toRemove)
@@ -1817,14 +2140,11 @@ private auto translateImpl(C1, T, C2)(C1[] str,
         auto newC = c in transTable;
 
         if (newC)
-            retval.put(*newC);
+            put(buffer, *newC);
         else
-            retval.put(c);
+            put(buffer, c);
     }
-
-    return retval.data;
 }
-
 
 /++
     This is an $(I $(RED ASCII-only)) overload of $(LREF _translate). It
@@ -1859,7 +2179,7 @@ private auto translateImpl(C1, T, C2)(C1[] str,
                      to replace them with. It is generated by $(LREF makeTrans).
         toRemove   = The characters to remove from the string.
   +/
-C[] translate(C = immutable char)(in char[] str, in char[] transTable, in char[] toRemove = null) @trusted nothrow
+C[] translate(C = immutable char)(in char[] str, in char[] transTable, in char[] toRemove = null) @trusted pure nothrow
     if (is(Unqual!C == char))
 in
 {
@@ -1879,15 +2199,9 @@ body
             ++count;
     }
 
-    auto retval = new char[count];
-    size_t i = 0;
-    foreach (char c; str)
-    {
-        if (!remTable[c])
-            retval[i++] = transTable[c];
-    }
-
-    return cast(C[])(retval);
+    auto buffer = new char[count];
+    translateImplAscii(str, transTable, remTable, buffer, toRemove);
+    return cast(C[])(buffer);
 }
 
 
@@ -1915,7 +2229,7 @@ body
 }
 
 ///
-unittest
+@safe pure nothrow unittest
 {
     auto transTable1 = makeTrans("eo5", "57q");
     assert(translate("hello world", transTable1) == "h5ll7 w7rld");
@@ -1923,7 +2237,7 @@ unittest
     assert(translate("hello world", transTable1, "low") == "h5 rd");
 }
 
-unittest
+@safe pure unittest
 {
     assertCTFEable!(
     {
@@ -1962,9 +2276,71 @@ unittest
     });
 }
 
+/++
+    This is an $(I $(RED ASCII-only)) overload of $(D translate) which takes an existing buffer to write the contents to.
+
+    Params:
+        str        = The original string.
+        transTable = The string indicating which characters to replace and what
+                     to replace them with. It is generated by $(LREF makeTrans).
+        toRemove   = The characters to remove from the string.
+        buffer     = An output range to write the contents to.
+  +/
+void translate(C = immutable char, Buffer)(in char[] str, in char[] transTable, in char[] toRemove, Buffer buffer)
+    if (is(Unqual!C == char) && isOutputRange!(Buffer, char))
+in
+{
+    assert(transTable.length == 256);
+}
+body
+{
+    bool[256] remTable = false;
+
+    foreach (char c; toRemove)
+        remTable[c] = true;
+
+    translateImplAscii(str, transTable, remTable, buffer, toRemove);
+}
+
+///
+@safe pure unittest
+{
+    auto buffer = appender!(char[])();
+    auto transTable1 = makeTrans("eo5", "57q");
+    translate("hello world", transTable1, null, buffer);
+    assert(buffer.data == "h5ll7 w7rld");
+
+    buffer.clear();
+    translate("hello world", transTable1, "low", buffer);
+    assert(buffer.data == "h5 rd");
+}
+
+private void translateImplAscii(C = immutable char, Buffer)(in char[] str, in char[] transTable, ref bool[256] remTable, Buffer buffer, in char[] toRemove = null)
+{
+    static if (isOutputRange!(Buffer, char))
+    {
+        foreach (char c; str)
+        {
+            if (!remTable[c])
+                put(buffer, transTable[c]);
+        }
+    }
+    else
+    {
+        size_t i = 0;
+        foreach (char c; str)
+        {
+            if (!remTable[c])
+                buffer[i++] = transTable[c];
+        }
+    }
+}
 
 /*****************************************************
  * Format arguments into a string.
+ *
+ * Params: fmt  = Format string. For detailed specification, see $(XREF format,formattedWrite).
+ *         args = Variadic list of arguments to format into returned string.
  *
  *  $(RED format's current implementation has been replaced with $(LREF xformat)'s
  *        implementation. in November 2012.
@@ -2022,9 +2398,9 @@ unittest
 
 
 /*****************************************************
- * Format arguments into string <i>s</i> which must be large
+ * Format arguments into buffer <i>buf</i> which must be large
  * enough to hold the result. Throws RangeError if it is not.
- * Returns: s
+ * Returns: The slice of $(D buf) containing the formatted string.
  *
  *  $(RED sformat's current implementation has been replaced with $(LREF xsformat)'s
  *        implementation. in November 2012.
@@ -2201,7 +2577,7 @@ deprecated unittest
  *  to be more like regular expression character classes.
  */
 
-bool inPattern(S)(dchar c, in S pattern) if (isSomeString!S)
+bool inPattern(S)(dchar c, in S pattern) @safe pure if (isSomeString!S)
 {
     bool result = false;
     int range = 0;
@@ -2267,7 +2643,7 @@ unittest
  * See if character c is in the intersection of the patterns.
  */
 
-bool inPattern(S)(dchar c, S[] patterns) if (isSomeString!S)
+bool inPattern(S)(dchar c, S[] patterns) @safe pure if (isSomeString!S)
 {
     foreach (string pattern; patterns)
     {
@@ -2284,7 +2660,7 @@ bool inPattern(S)(dchar c, S[] patterns) if (isSomeString!S)
  * Count characters in s that match pattern.
  */
 
-size_t countchars(S, S1)(S s, in S1 pattern) if (isSomeString!S && isSomeString!S1)
+size_t countchars(S, S1)(S s, in S1 pattern) @safe pure if (isSomeString!S && isSomeString!S1)
 {
     size_t count;
     foreach (dchar c; s)
@@ -2310,7 +2686,7 @@ unittest
  * Return string that is s with all characters removed that match pattern.
  */
 
-S removechars(S)(S s, in S pattern) if (isSomeString!S)
+S removechars(S)(S s, in S pattern) @safe pure if (isSomeString!S)
 {
     Unqual!(typeof(s[0]))[] r;
     bool changed = false;
@@ -2331,7 +2707,10 @@ S removechars(S)(S s, in S pattern) if (isSomeString!S)
             std.utf.encode(r, c);
         }
     }
-    return (changed ? cast(S) r : s);
+    if (changed)
+        return r;
+    else
+        return s;
 }
 
 unittest
@@ -2450,7 +2829,7 @@ S1 munch(S1, S2)(ref S1 s, S2 pattern)
     return s[0 .. j];
 }
 
-unittest
+@safe pure unittest
 {
     string s = "123abc";
     string t = munch(s, "0123456789");
@@ -2467,7 +2846,7 @@ unittest
  * repeated with the one to its immediate left.
  */
 
-S succ(S)(S s) if (isSomeString!S)
+S succ(S)(S s) @safe pure if (isSomeString!S)
 {
     if (s.length && std.ascii.isAlphaNum(s[$ - 1]))
     {
@@ -2496,7 +2875,7 @@ S succ(S)(S s) if (isSomeString!S)
                     auto t = new typeof(r[0])[r.length + 1];
                     t[0] = cast(char) carry;
                     t[1 .. $] = r[];
-                    return assumeUnique(t);
+                    return t;
                 }
                 i--;
                 break;
@@ -2504,7 +2883,7 @@ S succ(S)(S s) if (isSomeString!S)
             default:
                 if (std.ascii.isAlphaNum(c))
                     r[i]++;
-                return cast(S) r;
+                return r;
             }
         }
     }
@@ -2766,7 +3145,7 @@ unittest
  * function, or any of the conversion functions.
  */
 
-bool isNumeric(const(char)[] s, in bool bAllowSep = false)
+bool isNumeric(const(char)[] s, in bool bAllowSep = false) @safe pure
 {
     ptrdiff_t iLen = s.length;
     bool   bDecimalPoint = false;
@@ -2791,7 +3170,12 @@ bool isNumeric(const(char)[] s, in bool bAllowSep = false)
 
     // A sign is allowed only in the 1st character
     if (sx[0] == '-' || sx[0] == '+')
+    {
+        if (iLen == 1)  // but must be followed by other characters
+            return false;
+
         j++;
+    }
 
     for (int i = j; i < iLen; i++)
     {
@@ -2912,7 +3296,7 @@ bool isNumeric(const(char)[] s, in bool bAllowSep = false)
 
 unittest
 {
-    debug (string) printf("isNumeric(in string, bool = false).unittest\n");
+    debug(string) printf("isNumeric(in string, bool = false).unittest\n");
 
     assertCTFEable!(
     {
@@ -2955,6 +3339,9 @@ unittest
     assert(isNumeric(s) == false);
     assert(isNumeric(s[0..s.length - 1]) == false);
     });
+
+    assert(!isNumeric("-"));
+    assert(!isNumeric("+"));
 }
 
 
@@ -2986,7 +3373,7 @@ unittest
  *  but this one is the standard one.
  */
 
-char[] soundex(const(char)[] string, char[] buffer = null)
+char[] soundex(const(char)[] string, char[] buffer = null) @safe pure nothrow
 in
 {
     assert(!buffer || buffer.length >= 4);
@@ -3055,7 +3442,7 @@ body
     return buffer;
 }
 
-unittest
+@safe pure nothrow unittest
 {
     assertCTFEable!(
     {
@@ -3137,7 +3524,7 @@ unittest
  * </pre>
  */
 
-string[string] abbrev(string[] values)
+string[string] abbrev(string[] values) @safe pure
 {
     string[string] result;
 
@@ -3218,7 +3605,7 @@ unittest
  * leftmost column, which is numbered starting from 0.
  */
 
-size_t column(S)(S str, size_t tabsize = 8) if (isSomeString!S)
+size_t column(S)(S str, size_t tabsize = 8) @safe pure if (isSomeString!S)
 {
     size_t column;
 
@@ -3278,7 +3665,7 @@ unittest
  */
 
 S wrap(S)(S s, size_t columns = 80, S firstindent = null,
-        S indent = null, size_t tabsize = 8) if (isSomeString!S)
+        S indent = null, size_t tabsize = 8) @safe pure if (isSomeString!S)
 {
     typeof(s.dup) result;
     int spaces;
@@ -3339,7 +3726,7 @@ S wrap(S)(S s, size_t columns = 80, S firstindent = null,
     }
     result ~= '\n';
 
-    return assumeUnique(result);
+    return result;
 }
 
 unittest
@@ -3391,13 +3778,13 @@ unittest
  *
  */
 
-S outdent(S)(S str) if(isSomeString!S)
+S outdent(S)(S str) @safe pure if(isSomeString!S)
 {
     return str.splitLines(KeepTerminator.yes).outdent().join();
 }
 
 /// ditto
-S[] outdent(S)(S[] lines) if(isSomeString!S)
+S[] outdent(S)(S[] lines) @safe pure if(isSomeString!S)
 {
     if (lines.empty)
     {

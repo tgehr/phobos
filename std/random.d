@@ -1565,41 +1565,102 @@ Covers a given range $(D r) in a random manner, i.e. goes through each
 element of $(D r) once and only once, just in a random order. $(D r)
 must be a random-access range with length.
 
+If no random number generator is passed to $(D randomCover), the
+thread-global RNG rndGen will be used internally.
+
 Example:
 ----
 int[] a = [ 0, 1, 2, 3, 4, 5, 6, 7, 8 ];
-auto rnd = Random(unpredictableSeed);
-foreach (e; randomCover(a, rnd))
+foreach (e; randomCover(a))
 {
     writeln(e);
 }
 ----
+
+$(B WARNING:) If an alternative RNG is desired, it is essential for this
+to be a $(I new) RNG seeded in an unpredictable manner. Passing it a RNG
+used elsewhere in the program will result in unintended correlations,
+due to the current implementation of RNGs as value types.
+
+Example:
+----
+int[] a = [ 0, 1, 2, 3, 4, 5, 6, 7, 8 ];
+foreach (e; randomCover(a, Random(unpredictableSeed)))  // correct!
+{
+    writeln(e);
+}
+
+foreach (e; randomCover(a, rndGen))  // DANGEROUS!! rndGen gets copied by value
+{
+    writeln(e);
+}
+
+foreach (e; randomCover(a, rndGen))  // ... so this second random cover
+{                                    // will output the same sequence as
+    writeln(e);                      // the previous one.
+}
+----
+
+These issues will be resolved in a second-generation std.random that
+re-implements random number generators as reference types.
  */
-struct RandomCover(Range, Random)
-    if(isRandomAccessRange!Range && isUniformRNG!Random)
+struct RandomCover(Range, UniformRNG = void)
+    if (isRandomAccessRange!Range && (isUniformRNG!UniformRNG || is(UniformRNG == void)))
 {
     private Range _input;
-    private Random _rnd;
     private bool[] _chosen;
-    private uint _current;
-    private uint _alreadyChosen;
+    private size_t _current;
+    private size_t _alreadyChosen = 0;
 
-    this(Range input, Random rnd)
+    static if (is(UniformRNG == void))
     {
-        _input = input;
-        _rnd = rnd;
-        _chosen.length = _input.length;
-        popFront();
+        this(Range input)
+        {
+            _input = input;
+            _chosen.length = _input.length;
+            _alreadyChosen = 0;
+        }
+    }
+    else
+    {
+        private UniformRNG _rng;
+
+        this(Range input, ref UniformRNG rng)
+        {
+            _input = input;
+            _rng = rng;
+            _chosen.length = _input.length;
+            _alreadyChosen = 0;
+        }
+
+        this(Range input, UniformRNG rng)
+        {
+            this(input, rng);
+        }
     }
 
     static if (hasLength!Range)
+    {
         @property size_t length()
         {
-            return (1 + _input.length) - _alreadyChosen;
+            if (_alreadyChosen == 0)
+            {
+                return _input.length;
+            }
+            else
+            {
+                return (1 + _input.length) - _alreadyChosen;
+            }
         }
+    }
 
     @property auto ref front()
     {
+        if (_alreadyChosen == 0)
+        {
+            _chosen[] = false;
+            popFront();
+        }
         return _input[_current];
     }
 
@@ -1612,12 +1673,19 @@ struct RandomCover(Range, Random)
             return;
         }
         size_t k = _input.length - _alreadyChosen;
-        uint i;
+        size_t i;
         foreach (e; _input)
         {
             if (_chosen[i]) { ++i; continue; }
             // Roll a dice with k faces
-            auto chooseMe = uniform(0, k, _rnd) == 0;
+            static if (is(UniformRNG == void))
+            {
+                auto chooseMe = uniform(0, k) == 0;
+            }
+            else
+            {
+                auto chooseMe = uniform(0, k, _rng) == 0;
+            }
             assert(k > 1 || chooseMe);
             if (chooseMe)
             {
@@ -1631,40 +1699,65 @@ struct RandomCover(Range, Random)
         }
     }
 
-    @property typeof(this) save()
+    static if (isForwardRange!UniformRNG)
     {
-        auto ret = this;
-        ret._input = _input.save;
-        ret._rnd = _rnd.save;
-        return ret;
+        @property typeof(this) save()
+        {
+            auto ret = this;
+            ret._input = _input.save;
+            ret._rng = _rng.save;
+            return ret;
+        }
     }
 
     @property bool empty() { return _alreadyChosen > _input.length; }
 }
 
 /// Ditto
-RandomCover!(Range, Random) randomCover(Range, Random)(Range r, Random rnd)
-    if(isRandomAccessRange!Range && isUniformRNG!Random)
+auto randomCover(Range, UniformRNG)(Range r, auto ref UniformRNG rng)
+    if (isRandomAccessRange!Range && isUniformRNG!UniformRNG)
 {
-    return typeof(return)(r, rnd);
+    return RandomCover!(Range, UniformRNG)(r, rng);
+}
+
+/// Ditto
+auto randomCover(Range)(Range r)
+    if (isRandomAccessRange!Range)
+{
+    return RandomCover!(Range, void)(r);
 }
 
 unittest
 {
     int[] a = [ 0, 1, 2, 3, 4, 5, 6, 7, 8 ];
-    auto rnd = Random(unpredictableSeed);
-    RandomCover!(int[], Random) rc = randomCover(a, rnd);
-    static assert(isForwardRange!(typeof(rc)));
-
-    int[] b = new int[9];
-    uint i;
-    foreach (e; rc)
+    foreach (UniformRNG; TypeTuple!(void, PseudoRngTypes))
     {
-        //writeln(e);
-        b[i++] = e;
+        static if (is(UniformRNG == void))
+        {
+            auto rc = randomCover(a);
+            static assert(isInputRange!(typeof(rc)));
+            static assert(!isForwardRange!(typeof(rc)));
+        }
+        else
+        {
+            auto rng = UniformRNG(unpredictableSeed);
+            auto rc = randomCover(a, rng);
+            static assert(isForwardRange!(typeof(rc)));
+            // check for constructor passed a value-type RNG
+            auto rc2 = RandomCover!(int[], UniformRNG)(a, UniformRNG(unpredictableSeed));
+            static assert(isForwardRange!(typeof(rc2)));
+        }
+
+        int[] b = new int[9];
+        uint i;
+        foreach (e; rc)
+        {
+            //writeln(e);
+            b[i++] = e;
+        }
+        sort(b);
+        assert(a == b, text(b));
     }
-    sort(b);
-    assert(a == b, text(b));
 }
 
 // RandomSample
@@ -1675,10 +1768,22 @@ range. The total length of $(D r) must be known. If $(D total) is
 passed in, the total number of sample is considered to be $(D
 total). Otherwise, $(D RandomSample) uses $(D r.length).
 
-If the number of elements is not exactly $(D total), $(D
-RandomSample) throws an exception. This is because $(D total) is
-essential to computing the probability of selecting elements in the
-range.
+$(D RandomSample) implements Jeffrey Scott Vitter's Algorithm D
+(see Vitter $(WEB dx.doi.org/10.1145/358105.893, 1984), $(WEB
+dx.doi.org/10.1145/23002.23003, 1987)), which selects a sample
+of size $(D n) in O(n) steps and requiring O(n) random variates,
+regardless of the size of the data being sampled.  The exception
+to this is if traversing k elements on the input range is itself
+an O(k) operation (e.g. when sampling lines from an input file),
+in which case the sampling calculation will inevitably be of
+O(total).
+
+RandomSample will throw an exception if $(D total) is verifiably
+less than the total number of elements available in the input,
+or if $(D n > total).
+
+If no random number generator is passed to $(D randomSample), the
+thread-global RNG rndGen will be used internally.
 
 Example:
 ----
@@ -1690,62 +1795,94 @@ foreach (e; randomSample(a, 5))
 }
 ----
 
-$(D RandomSample) implements Jeffrey Scott Vitter's Algorithm D
-(see Vitter $(WEB dx.doi.org/10.1145/358105.893, 1984), $(WEB
-dx.doi.org/10.1145/23002.23003, 1987)), which selects a sample
-of size $(D n) in O(n) steps and requiring O(n) random variates,
-regardless of the size of the data being sampled.
+$(B WARNING:) If an alternative RNG is desired, it is essential for this
+to be a $(I new) RNG seeded in an unpredictable manner. Passing it a RNG
+used elsewhere in the program will result in unintended correlations,
+due to the current implementation of RNGs as value types.
+
+Example:
+----
+int[] a = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ];
+foreach (e; randomSample(a, 5, Random(unpredictableSeed)))  // correct!
+{
+    writeln(e);
+}
+
+foreach (e; randomSample(a, 5, rndGen))  // DANGEROUS!! rndGen gets
+{                                        // copied by value
+    writeln(e);
+}
+
+foreach (e; randomSample(a, 5, rndGen))  // ... so this second random
+{                                        // sample will select the same
+    writeln(e);                          // values as the previous one.
+}
+----
+
+These issues will be resolved in a second-generation std.random that
+re-implements random number generators as reference types.
 */
-struct RandomSample(R, Random = void)
-    if (isInputRange!R && (isUniformRNG!Random || is(Random == void)))
+struct RandomSample(Range, UniformRNG = void)
+    if (isInputRange!Range && (isUniformRNG!UniformRNG || is(UniformRNG == void)))
 {
     private size_t _available, _toSelect;
     private enum ushort _alphaInverse = 13; // Vitter's recommended value.
-    private bool _first, _algorithmA;
     private double _Vprime;
-    private R _input;
+    private Range _input;
     private size_t _index;
+    private enum Skip { None, A, D };
+    private Skip _skip = Skip.None;
 
     // If we're using the default thread-local random number generator then
-    // we shouldn't store a copy of it here.  Random == void is a sentinel
+    // we shouldn't store a copy of it here.  UniformRNG == void is a sentinel
     // for this.  If we're using a user-specified generator then we have no
     // choice but to store a copy.
-    static if (!is(Random == void))
+    static if (is(UniformRNG == void))
     {
-        Random _gen;
-
-        static if (hasLength!R)
+        static if (hasLength!Range)
         {
-            this(R input, size_t howMany, Random gen)
+            this(Range input, size_t howMany)
             {
-                _gen = gen;
                 _input = input;
                 initialize(howMany, input.length);
             }
         }
 
-        this(R input, size_t howMany, size_t total, Random gen)
+        this(Range input, size_t howMany, size_t total)
         {
-            _gen = gen;
             _input = input;
             initialize(howMany, total);
         }
     }
     else
     {
-        static if (hasLength!R)
+        UniformRNG _rng;
+
+        static if (hasLength!Range)
         {
-            this(R input, size_t howMany)
+            this(Range input, size_t howMany, ref UniformRNG rng)
             {
+                _rng = rng;
                 _input = input;
                 initialize(howMany, input.length);
             }
+
+            this(Range input, size_t howMany, UniformRNG rng)
+            {
+                this(input, howMany, rng);
+            }
         }
 
-        this(R input, size_t howMany, size_t total)
+        this(Range input, size_t howMany, size_t total, ref UniformRNG rng)
         {
+            _rng = rng;
             _input = input;
             initialize(howMany, total);
+        }
+
+        this(Range input, size_t howMany, size_t total, UniformRNG rng)
+        {
+            this(input, howMany, total, rng);
         }
     }
 
@@ -1756,14 +1893,30 @@ struct RandomSample(R, Random = void)
         enforce(_toSelect <= _available,
                 text("RandomSample: cannot sample ", _toSelect,
                      " items when only ", _available, " are available"));
-        static if (hasLength!R)
+        static if (hasLength!Range)
         {
             enforce(_available <= _input.length,
                     text("RandomSample: specified ", _available,
                          " items as available when input contains only ",
                          _input.length));
         }
-        _first = true;
+    }
+
+    private void initializeFront()
+    {
+        assert(_skip == Skip.None);
+        // We can save ourselves a random variate by checking right
+        // at the beginning if we should use Algorithm A.
+        if ((_alphaInverse * _toSelect) > _available)
+        {
+            _skip = Skip.A;
+        }
+        else
+        {
+            _skip = Skip.D;
+            _Vprime = newVprime(_toSelect);
+        }
+        prime();
     }
 
 /**
@@ -1781,21 +1934,9 @@ struct RandomSample(R, Random = void)
         // having it always correspond to the first element of the
         // input.  The rest of the sample points are determined each
         // time we call popFront().
-        if (_first)
+        if (_skip == Skip.None)
         {
-            // We can save ourselves a random variate by checking right
-            // at the beginning if we should use Algorithm A.
-            if ((_alphaInverse * _toSelect) > _available)
-            {
-                _algorithmA = true;
-            }
-            else
-            {
-                _Vprime = newVprime(_toSelect);
-                _algorithmA = false;
-            }
-            prime();
-            _first = false;
+            initializeFront();
         }
         return _input.front;
     }
@@ -1803,6 +1944,13 @@ struct RandomSample(R, Random = void)
 /// Ditto
     void popFront()
     {
+        // First we need to check if the sample has
+        // been initialized in the first place.
+        if (_skip == Skip.None)
+        {
+            initializeFront();
+        }
+
         _input.popFront();
         --_available;
         --_toSelect;
@@ -1811,12 +1959,13 @@ struct RandomSample(R, Random = void)
     }
 
 /// Ditto
-    static if (isForwardRange!R)
+    static if (isForwardRange!Range && isForwardRange!UniformRNG)
     {
         @property typeof(this) save()
         {
             auto ret = this;
             ret._input = _input.save;
+            ret._rng = _rng.save;
             return ret;
         }
     }
@@ -1830,9 +1979,40 @@ struct RandomSample(R, Random = void)
 /**
 Returns the index of the visited record.
  */
-    size_t index()
+    @property size_t index()
     {
+        if (_skip == Skip.None)
+        {
+            initializeFront();
+        }
         return _index;
+    }
+
+    private size_t skip()
+    {
+        assert(_skip != Skip.None);
+
+        // Step D1: if the number of points still to select is greater
+        // than a certain proportion of the remaining data points, i.e.
+        // if n >= alpha * N where alpha = 1/13, we carry out the
+        // sampling with Algorithm A.
+        if (_skip == Skip.A)
+        {
+            return skipA();
+        }
+        else if ((_alphaInverse * _toSelect) > _available)
+        {
+            // We shouldn't get here unless the current selected
+            // algorithm is D.
+            assert(_skip == Skip.D);
+            _skip = Skip.A;
+            return skipA();
+        }
+        else
+        {
+            assert(_skip == Skip.D);
+            return skipD();
+        }
     }
 
 /*
@@ -1846,13 +2026,13 @@ to remaining data values is sufficiently large.
 
         if (_toSelect==1)
         {
-            static if(is(Random==void))
+            static if (is(UniformRNG == void))
             {
                 s = uniform(0, _available);
             }
             else
             {
-                s = uniform(0, _available, _gen);
+                s = uniform(0, _available, _rng);
             }
         }
         else
@@ -1861,13 +2041,13 @@ to remaining data values is sufficiently large.
             top = _available - _toSelect;
             quot = top / _available;
 
-            static if (is(Random==void))
+            static if (is(UniformRNG == void))
             {
                 v = uniform!"()"(0.0, 1.0);
             }
             else
             {
-                v = uniform!"()"(0.0, 1.0, _gen);
+                v = uniform!"()"(0.0, 1.0, _rng);
             }
 
             while (quot > v)
@@ -1885,13 +2065,13 @@ Randomly reset the value of _Vprime.
 */
     private double newVprime(size_t remaining)
     {
-        static if (is(Random == void))
+        static if (is(UniformRNG == void))
         {
             double r = uniform!"()"(0.0, 1.0);
         }
         else
         {
-            double r = uniform!"()"(0.0, 1.0, _gen);
+            double r = uniform!"()"(0.0, 1.0, _rng);
         }
 
         return r ^^ (1.0 / remaining);
@@ -1909,45 +2089,38 @@ and its rationale, see:
 
 Variable names are chosen to match those in Vitter's paper.
 */
-    private size_t skip()
+    private size_t skipD()
     {
-        // Step D1: if the number of points still to select is greater
-        // than a certain proportion of the remaining data points, i.e.
-        // if n >= alpha * N where alpha = 1/13, we carry out the
-        // sampling with Algorithm A.
-        if (_algorithmA)
-        {
-            return skipA();
-        }
-        else if ((_alphaInverse * _toSelect) > _available)
-        {
-            _algorithmA = true;
-            return skipA();
-        }
-        // Otherwise, we use the standard Algorithm D mechanism.
-        else if (_toSelect > 1)
+        // Confirm that the check in Step D1 is valid and we
+        // haven't been sent here by mistake
+        assert((_alphaInverse * _toSelect) <= _available);
+
+        // Now it's safe to use the standard Algorithm D mechanism.
+        if (_toSelect > 1)
         {
             size_t s;
             size_t qu1 = 1 + _available - _toSelect;
             double x, y1;
 
-            while(true)
+            assert(!_Vprime.isNaN);
+
+            while (true)
             {
                 // Step D2: set values of x and u.
-                for(x = _available * (1-_Vprime), s = cast(size_t) trunc(x);
-                    s >= qu1;
-                    x = _available * (1-_Vprime), s = cast(size_t) trunc(x))
+                for (x = _available * (1-_Vprime), s = cast(size_t) trunc(x);
+                     s >= qu1;
+                     x = _available * (1-_Vprime), s = cast(size_t) trunc(x))
                 {
                     _Vprime = newVprime(_toSelect);
                 }
 
-                static if (is(Random == void))
+                static if (is(UniformRNG == void))
                 {
                     double u = uniform!"()"(0.0, 1.0);
                 }
                 else
                 {
-                    double u = uniform!"()"(0.0, 1.0, _gen);
+                    double u = uniform!"()"(0.0, 1.0, _rng);
                 }
 
                 y1 = (u * (cast(double) _available) / qu1) ^^ (1.0/(_toSelect - 1));
@@ -1972,7 +2145,7 @@ Variable names are chosen to match those in Vitter's paper.
                         limit = qu1;
                     }
 
-                    foreach(size_t t; limit.._available)
+                    foreach (size_t t; limit .. _available)
                     {
                         y2 *= top/bottom;
                         top--;
@@ -1983,7 +2156,7 @@ Variable names are chosen to match those in Vitter's paper.
                     if (_available/(_available-x) < y1 * (y2 ^^ (1.0/(_toSelect-1))))
                     {
                         // If it's not acceptable, we generate a new value of _Vprime
-                        // and go back to the start of the for(;;) loop.
+                        // and go back to the start of the for (;;) loop.
                         _Vprime = newVprime(_toSelect);
                     }
                     else
@@ -2011,11 +2184,14 @@ Variable names are chosen to match those in Vitter's paper.
 
     private void prime()
     {
-        if (empty) return;
+        if (empty)
+        {
+            return;
+        }
         assert(_available && _available >= _toSelect);
         immutable size_t s = skip();
         assert(s + _toSelect <= _available);
-        static if (hasLength!R)
+        static if (hasLength!Range)
         {
             assert(s + _toSelect <= _input.length);
         }
@@ -2028,31 +2204,31 @@ Variable names are chosen to match those in Vitter's paper.
 }
 
 /// Ditto
-auto randomSample(R)(R r, size_t n, size_t total)
-    if (isInputRange!R)
+auto randomSample(Range)(Range r, size_t n, size_t total)
+    if (isInputRange!Range)
 {
-    return RandomSample!(R, void)(r, n, total);
+    return RandomSample!(Range, void)(r, n, total);
 }
 
 /// Ditto
-auto randomSample(R)(R r, size_t n)
-    if (isInputRange!R && hasLength!R)
+auto randomSample(Range)(Range r, size_t n)
+    if (isInputRange!Range && hasLength!Range)
 {
-    return RandomSample!(R, void)(r, n, r.length);
+    return RandomSample!(Range, void)(r, n, r.length);
 }
 
 /// Ditto
-auto randomSample(R, Random)(R r, size_t n, size_t total, Random gen)
-    if (isInputRange!R && isUniformRNG!Random)
+auto randomSample(Range, UniformRNG)(Range r, size_t n, size_t total, auto ref UniformRNG rng)
+    if (isInputRange!Range && isUniformRNG!UniformRNG)
 {
-    return RandomSample!(R, Random)(r, n, total, gen);
+    return RandomSample!(Range, UniformRNG)(r, n, total, rng);
 }
 
 /// Ditto
-auto randomSample(R, Random)(R r, size_t n, Random gen)
-    if (isInputRange!R && hasLength!R && isUniformRNG!Random)
+auto randomSample(Range, UniformRNG)(Range r, size_t n, auto ref UniformRNG rng)
+    if (isInputRange!Range && hasLength!Range && isUniformRNG!UniformRNG)
 {
-    return RandomSample!(R, Random)(r, n, r.length, gen);
+    return RandomSample!(Range, UniformRNG)(r, n, r.length, rng);
 }
 
 unittest
@@ -2068,223 +2244,306 @@ unittest
     static assert(isInputRange!TestInputRange);
     static assert(!isForwardRange!TestInputRange);
 
-    Random gen;
     int[] a = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ];
 
-    /* First test the most general case: randomSample of input range, with and
-     * without a specified random number generator.
-     */
-    static assert(isInputRange!(typeof(randomSample(TestInputRange(), 5, 10))));
-    static assert(isInputRange!(typeof(randomSample(TestInputRange(), 5, 10, gen))));
-    static assert(!isForwardRange!(typeof(randomSample(TestInputRange(), 5, 10))));
-    static assert(!isForwardRange!(typeof(randomSample(TestInputRange(), 5, 10, gen))));
-
-    /* Now test the case of an input range with length.  We ignore the cases
-     * already covered by the previous tests.
-     */
-    static assert(isInputRange!(typeof(randomSample(TestInputRange().takeExactly(10), 5))));
-    static assert(isInputRange!(typeof(randomSample(TestInputRange().takeExactly(10), 5, gen))));
-    static assert(!isForwardRange!(typeof(randomSample(TestInputRange().takeExactly(10), 5))));
-    static assert(!isForwardRange!(typeof(randomSample(TestInputRange().takeExactly(10), 5, gen))));
-
-    // Now test the case of providing a forward range as input.
-    static assert(isForwardRange!(typeof(randomSample(a, 5))));
-    static assert(isForwardRange!(typeof(randomSample(a, 5, gen))));
-
-    /* Check that randomSample will throw an error if we claim more
-     * items are available than there actually are, or if we try to
-     * sample more items than are available. */
-    assert(collectExceptionMsg(randomSample(a, 5, 15)) == "RandomSample: specified 15 items as available when input contains only 10");
-    assert(collectExceptionMsg(randomSample(a, 15)) == "RandomSample: cannot sample 15 items when only 10 are available");
-    assert(collectExceptionMsg(randomSample(a, 9, 8)) == "RandomSample: cannot sample 9 items when only 8 are available");
-    assert(collectExceptionMsg(randomSample(TestInputRange(), 12, 11)) == "RandomSample: cannot sample 12 items when only 11 are available");
-
-    /* Check that sampling algorithm never accidentally overruns the end of
-     * the input range.  If input is an InputRange without .length, this
-     * relies on the user specifying the total number of available items
-     * correctly.
-     */
+    foreach (UniformRNG; PseudoRngTypes)
     {
-        uint i = 0;
-        foreach(e; randomSample(a, a.length))
-        {
-            assert(e == i);
-            ++i;
-        }
-        assert(i == a.length);
-
-        i = 0;
-        foreach(e; randomSample(TestInputRange(), 17, 17))
-        {
-            assert(e == i);
-            ++i;
-        }
-        assert(i == 17);
-    }
-
-
-    // Check length properties of random samples.
-    assert(randomSample(a, 5).length == 5);
-    assert(randomSample(a, 5, 10).length == 5);
-    assert(randomSample(a, 5, gen).length == 5);
-    assert(randomSample(a, 5, 10, gen).length == 5);
-    assert(randomSample(TestInputRange(), 5, 10).length == 5);
-    assert(randomSample(TestInputRange(), 5, 10, gen).length == 5);
-
-    // ... and emptiness!
-    assert(randomSample(a, 0).empty);
-    assert(randomSample(a, 0, 5).empty);
-    assert(randomSample(a, 0, gen).empty);
-    assert(randomSample(a, 0, 5, gen).empty);
-    assert(randomSample(TestInputRange(), 0, 10).empty);
-    assert(randomSample(TestInputRange(), 0, 10, gen).empty);
-
-    /* Test that the (lazy) evaluation of random samples works correctly.
-     *
-     * We cover 2 different cases: a sample where the ratio of sample points
-     * to total points is greater than the threshold for using Algorithm, and
-     * one where the ratio is small enough (< 1/13) for Algorithm D to be used.
-     *
-     * For each, we also cover the case with and without a specified RNG.
-     */
-    {
-        // Small sample/source ratio, no specified RNG.
-        uint i = 0;
-        foreach (e; randomSample(randomCover(a, rndGen), 5))
-        {
-            ++i;
-        }
-        assert(i == 5);
-
-        // Small sample/source ratio, specified RNG.
-        i = 0;
-        foreach(e; randomSample(randomCover(a, rndGen), 5, gen))
-        {
-            ++i;
-        }
-        assert(i == 5);
-
-        // Large sample/source ratio, no specified RNG.
-        i = 0;
-        foreach(e; randomSample(TestInputRange(), 123, 123_456))
-        {
-            ++i;
-        }
-        assert(i == 123);
-
-        // Large sample/source ratio, specified RNG.
-        i = 0;
-        foreach(e; randomSample(TestInputRange(), 123, 123_456, gen))
-        {
-            ++i;
-        }
-        assert(i == 123);
-
-        /* Sample/source ratio large enough to start with Algorithm D,
-         * small enough to switch to Algorithm A.
+        auto rng = UniformRNG(unpredictableSeed);
+        /* First test the most general case: randomSample of input range, with and
+         * without a specified random number generator.
          */
-        i = 0;
-        foreach(e; randomSample(TestInputRange(), 10, 131))
+        static assert(isInputRange!(typeof(randomSample(TestInputRange(), 5, 10))));
+        static assert(isInputRange!(typeof(randomSample(TestInputRange(), 5, 10, rng))));
+        static assert(!isForwardRange!(typeof(randomSample(TestInputRange(), 5, 10))));
+        static assert(!isForwardRange!(typeof(randomSample(TestInputRange(), 5, 10, rng))));
+        // test case with range initialized by direct call to struct
         {
-            ++i;
-        }
-        assert(i == 10);
-    }
-
-    // Test that the .index property works correctly
-    {
-        auto sample1 = randomSample(TestInputRange(), 654, 654_321);
-        for(; !sample1.empty; sample1.popFront())
-        {
-            assert(sample1.front == sample1.index());
+            auto sample =
+                RandomSample!(TestInputRange, UniformRNG)
+                             (TestInputRange(), 5, 10, UniformRNG(unpredictableSeed));
+            static assert(isInputRange!(typeof(sample)));
+            static assert(!isForwardRange!(typeof(sample)));
         }
 
-        auto sample2 = randomSample(TestInputRange(), 654, 654_321, gen);
-        for(; !sample2.empty; sample2.popFront())
-        {
-            assert(sample2.front == sample2.index());
-        }
-
-        /* These next 2 tests will fail because of Issue 10322.  They
-         * should be restored to test that this bug has been fixed.
-         * http://d.puremagic.com/issues/show_bug.cgi?id=10322
+        /* Now test the case of an input range with length.  We ignore the cases
+         * already covered by the previous tests.
          */
-        version(none)
+        static assert(isInputRange!(typeof(randomSample(TestInputRange().takeExactly(10), 5))));
+        static assert(isInputRange!(typeof(randomSample(TestInputRange().takeExactly(10), 5, rng))));
+        static assert(!isForwardRange!(typeof(randomSample(TestInputRange().takeExactly(10), 5))));
+        static assert(!isForwardRange!(typeof(randomSample(TestInputRange().takeExactly(10), 5, rng))));
+        // test case with range initialized by direct call to struct
         {
+            auto sample =
+                RandomSample!(typeof(TestInputRange().takeExactly(10)), UniformRNG)
+                             (TestInputRange().takeExactly(10), 5, 10, UniformRNG(unpredictableSeed));
+            static assert(isInputRange!(typeof(sample)));
+            static assert(!isForwardRange!(typeof(sample)));
+        }
+
+        // Now test the case of providing a forward range as input.
+        static assert(!isForwardRange!(typeof(randomSample(a, 5))));
+        static if (isForwardRange!UniformRNG)
+        {
+            static assert(isForwardRange!(typeof(randomSample(a, 5, rng))));
+            // ... and test with range initialized directly
+            {
+                auto sample =
+                    RandomSample!(int[], UniformRNG)
+                                 (a, 5, UniformRNG(unpredictableSeed));
+                static assert(isForwardRange!(typeof(sample)));
+            }
+        }
+        else
+        {
+            static assert(isInputRange!(typeof(randomSample(a, 5, rng))));
+            static assert(!isForwardRange!(typeof(randomSample(a, 5, rng))));
+            // ... and test with range initialized directly
+            {
+                auto sample =
+                    RandomSample!(int[], UniformRNG)
+                                 (a, 5, UniformRNG(unpredictableSeed));
+                static assert(isInputRange!(typeof(sample)));
+                static assert(!isForwardRange!(typeof(sample)));
+            }
+        }
+
+        /* Check that randomSample will throw an error if we claim more
+         * items are available than there actually are, or if we try to
+         * sample more items than are available. */
+        assert(collectExceptionMsg(randomSample(a, 5, 15)) == "RandomSample: specified 15 items as available when input contains only 10");
+        assert(collectExceptionMsg(randomSample(a, 15)) == "RandomSample: cannot sample 15 items when only 10 are available");
+        assert(collectExceptionMsg(randomSample(a, 9, 8)) == "RandomSample: cannot sample 9 items when only 8 are available");
+        assert(collectExceptionMsg(randomSample(TestInputRange(), 12, 11)) == "RandomSample: cannot sample 12 items when only 11 are available");
+
+        /* Check that sampling algorithm never accidentally overruns the end of
+         * the input range.  If input is an InputRange without .length, this
+         * relies on the user specifying the total number of available items
+         * correctly.
+         */
+        {
+            uint i = 0;
+            foreach (e; randomSample(a, a.length))
+            {
+                assert(e == i);
+                ++i;
+            }
+            assert(i == a.length);
+
+            i = 0;
+            foreach (e; randomSample(TestInputRange(), 17, 17))
+            {
+                assert(e == i);
+                ++i;
+            }
+            assert(i == 17);
+        }
+
+
+        // Check length properties of random samples.
+        assert(randomSample(a, 5).length == 5);
+        assert(randomSample(a, 5, 10).length == 5);
+        assert(randomSample(a, 5, rng).length == 5);
+        assert(randomSample(a, 5, 10, rng).length == 5);
+        assert(randomSample(TestInputRange(), 5, 10).length == 5);
+        assert(randomSample(TestInputRange(), 5, 10, rng).length == 5);
+
+        // ... and emptiness!
+        assert(randomSample(a, 0).empty);
+        assert(randomSample(a, 0, 5).empty);
+        assert(randomSample(a, 0, rng).empty);
+        assert(randomSample(a, 0, 5, rng).empty);
+        assert(randomSample(TestInputRange(), 0, 10).empty);
+        assert(randomSample(TestInputRange(), 0, 10, rng).empty);
+
+        /* Test that the (lazy) evaluation of random samples works correctly.
+         *
+         * We cover 2 different cases: a sample where the ratio of sample points
+         * to total points is greater than the threshold for using Algorithm, and
+         * one where the ratio is small enough (< 1/13) for Algorithm D to be used.
+         *
+         * For each, we also cover the case with and without a specified RNG.
+         */
+        {
+            // Small sample/source ratio, no specified RNG.
+            uint i = 0;
+            foreach (e; randomSample(randomCover(a), 5))
+            {
+                ++i;
+            }
+            assert(i == 5);
+
+            // Small sample/source ratio, specified RNG.
+            i = 0;
+            foreach (e; randomSample(randomCover(a), 5, rng))
+            {
+                ++i;
+            }
+            assert(i == 5);
+
+            // Large sample/source ratio, no specified RNG.
+            i = 0;
+            foreach (e; randomSample(TestInputRange(), 123, 123_456))
+            {
+                ++i;
+            }
+            assert(i == 123);
+
+            // Large sample/source ratio, specified RNG.
+            i = 0;
+            foreach (e; randomSample(TestInputRange(), 123, 123_456, rng))
+            {
+                ++i;
+            }
+            assert(i == 123);
+
+            /* Sample/source ratio large enough to start with Algorithm D,
+             * small enough to switch to Algorithm A.
+             */
+            i = 0;
+            foreach (e; randomSample(TestInputRange(), 10, 131))
+            {
+                ++i;
+            }
+            assert(i == 10);
+        }
+
+        // Test that the .index property works correctly
+        {
+            auto sample1 = randomSample(TestInputRange(), 654, 654_321);
+            for (; !sample1.empty; sample1.popFront())
+            {
+                assert(sample1.front == sample1.index);
+            }
+
+            auto sample2 = randomSample(TestInputRange(), 654, 654_321, rng);
+            for (; !sample2.empty; sample2.popFront())
+            {
+                assert(sample2.front == sample2.index);
+            }
+
+            /* Check that it also works if .index is called before .front.
+             * See: http://d.puremagic.com/issues/show_bug.cgi?id=10322
+             */
             auto sample3 = randomSample(TestInputRange(), 654, 654_321);
-            for(; !sample3.empty; sample3.popFront())
+            for (; !sample3.empty; sample3.popFront())
             {
-                assert(sample3.index() == sample3.front);
+                assert(sample3.index == sample3.front);
             }
 
-            auto sample4 = randomSample(TestInputRange(), 654, 654_321, gen);
-            for(; !sample4.empty; sample4.popFront())
+            auto sample4 = randomSample(TestInputRange(), 654, 654_321, rng);
+            for (; !sample4.empty; sample4.popFront())
             {
-                assert(sample4.index() == sample4.front);
+                assert(sample4.index == sample4.front);
             }
         }
-    }
 
-    /* Odd corner-cases: RandomSample has 2 constructors that are not called
-     * by the randomSample() helper functions, but that can be used if the
-     * constructor is called directly.  These cover the case of the user
-     * specifying input but not input length.
-     */
-    {
-        auto input1 = TestInputRange().takeExactly(456_789);
-        static assert(hasLength!(typeof(input1)));
-        auto sample1 = RandomSample!(typeof(input1), void)(input1, 789);
-        static assert(isInputRange!(typeof(sample1)));
-        static assert(!isForwardRange!(typeof(sample1)));
-        assert(sample1.length == 789);
-        assert(sample1._available == 456_789);
-        uint i = 0;
-        for(; !sample1.empty; sample1.popFront())
+        /* Test behaviour if .popFront() is called before sample is read.
+         * This is a rough-and-ready check that the statistical properties
+         * are in the ballpark -- not a proper validation of statistical
+         * quality!  This incidentally also checks for reference-type
+         * initialization bugs, as the foreach() loop will operate on a
+         * copy of the popFronted (and hence initialized) sample.
+         */
         {
-            assert(sample1.front == sample1.index());
-            ++i;
+            size_t count0, count1, count99;
+            foreach(_; 0 .. 100_000)
+            {
+                auto sample = randomSample(iota(100), 5);
+                sample.popFront();
+                foreach(s; sample)
+                {
+                    if (s == 0)
+                    {
+                        ++count0;
+                    }
+                    else if (s == 1)
+                    {
+                        ++count1;
+                    }
+                    else if (s == 99)
+                    {
+                        ++count99;
+                    }
+                }
+            }
+            /* Statistical assumptions here: this is a sequential sampling process
+             * so (i) 0 can only be the first sample point, so _can't_ be in the
+             * remainder of the sample after .popFront() is called. (ii) By similar
+             * token, 1 can only be in the remainder if it's the 2nd point of the
+             * whole sample, and hence if 0 was the first; probability of 0 being
+             * first and 1 second is 5/100 * 4/99 (thank you, Algorithm S:-) and
+             * so the mean count of 1 should be about 202.  Finally, 99 can only
+             * be the _last_ sample point to be picked, so its probability of
+             * inclusion should be independent of the .popFront() and it should
+             * occur with frequency 5/100, hence its count should be about 5000.
+             * Unfortunately we have to set quite a high tolerance because with
+             * sample size small enough for unittests to run in reasonable time,
+             * the variance can be quite high.
+             */
+            assert(count0 == 0);
+            assert(count1 < 300, text("1: ", count1, " > 300."));
+            assert(4_700 < count99, text("99: ", count99, " < 4700."));
+            assert(count99 < 5_300, text("99: ", count99, " > 5300."));
         }
-        assert(i == 789);
 
-        auto input2 = TestInputRange().takeExactly(456_789);
-        static assert(hasLength!(typeof(input2)));
-        auto sample2 = RandomSample!(typeof(input2), typeof(gen))(input2, 789, gen);
-        static assert(isInputRange!(typeof(sample2)));
-        static assert(!isForwardRange!(typeof(sample2)));
-        assert(sample2.length == 789);
-        assert(sample2._available == 456_789);
-        i = 0;
-        for(; !sample2.empty; sample2.popFront())
+        /* Odd corner-cases: RandomSample has 2 constructors that are not called
+         * by the randomSample() helper functions, but that can be used if the
+         * constructor is called directly.  These cover the case of the user
+         * specifying input but not input length.
+         */
         {
-            assert(sample2.front == sample2.index());
-            ++i;
+            auto input1 = TestInputRange().takeExactly(456_789);
+            static assert(hasLength!(typeof(input1)));
+            auto sample1 = RandomSample!(typeof(input1), void)(input1, 789);
+            static assert(isInputRange!(typeof(sample1)));
+            static assert(!isForwardRange!(typeof(sample1)));
+            assert(sample1.length == 789);
+            assert(sample1._available == 456_789);
+            uint i = 0;
+            for (; !sample1.empty; sample1.popFront())
+            {
+                assert(sample1.front == sample1.index);
+                ++i;
+            }
+            assert(i == 789);
+
+            auto input2 = TestInputRange().takeExactly(456_789);
+            static assert(hasLength!(typeof(input2)));
+            auto sample2 = RandomSample!(typeof(input2), typeof(rng))(input2, 789, rng);
+            static assert(isInputRange!(typeof(sample2)));
+            static assert(!isForwardRange!(typeof(sample2)));
+            assert(sample2.length == 789);
+            assert(sample2._available == 456_789);
+            i = 0;
+            for (; !sample2.empty; sample2.popFront())
+            {
+                assert(sample2.front == sample2.index);
+                ++i;
+            }
+            assert(i == 789);
         }
-        assert(i == 789);
-    }
 
-    /* Test that the save property works where input is a forward range.
-     * Commented out for now as it will fail with the present incorrect
-     * .save method of RandomSample.  Remove the version(none) to test
-     * fixes (but leave the braces in place:-).
-     */
-    version(none)
-    {
-        auto sample1 = randomSample(a, 5);
-        auto save1 = sample1.save;
-        assert(sample1.array() == save1.array());
+        /* Test that the save property works where input is a forward range,
+         * and RandomSample is using a (forward range) random number generator
+         * that is not rndGen.
+         */
+        static if (isForwardRange!UniformRNG)
+        {
+            auto sample1 = randomSample(a, 5, rng);
+            auto sample2 = sample1.save;
+            assert(sample1.array() == sample2.array());
+        }
 
-        auto sample2 = randomSample(a, 5, gen);
-        auto save2 = sample2.save;
-        assert(sample2.array() == save2.array());
-    }
+        // Bugzilla 8314
+        {
+            auto sample(RandomGen)(uint seed) { return randomSample(a, 1, RandomGen(seed)).front; }
 
-    // Bugzilla 8314
-    {
-        auto sample(uint seed) { return randomSample(a, 1, Random(seed)).front; }
-
-        immutable fst = sample(0);
-        uint n;
-        while (sample(++n) == fst && n < n.max) {}
-        assert(n < n.max);
+            // Start from 1 because not all RNGs accept 0 as seed.
+            immutable fst = sample!UniformRNG(1);
+            uint n = 1;
+            while (sample!UniformRNG(++n) == fst && n < n.max) {}
+            assert(n < n.max);
+        }
     }
 }

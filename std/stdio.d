@@ -115,6 +115,8 @@ else version (MICROSOFT_STDIO)
         int _fgetwc_nolock(_iobuf*);
         void _lock_file(FILE*);
         void _unlock_file(FILE*);
+        int _setmode(int, int);
+        int _fileno(FILE*);
     }
     alias _fputc_nolock FPUTC;
     alias _fputwc_nolock FPUTWC;
@@ -123,6 +125,9 @@ else version (MICROSOFT_STDIO)
 
     alias _lock_file FLOCK;
     alias _unlock_file FUNLOCK;
+
+    enum _O_BINARY = 0x8000;
+
 }
 else version (GCC_IO)
 {
@@ -740,7 +745,7 @@ Throws: $(D Exception) if the file is not opened.
 */
     void write(S...)(S args)
     {
-        auto w = lockingTextWriter;
+        auto w = lockingTextWriter();
         foreach (arg; args)
         {
             alias typeof(arg) A;
@@ -792,7 +797,7 @@ Throws: $(D Exception) if the file is not opened.
 */
     void writef(Char, A...)(in Char[] fmt, A args)
     {
-        std.format.formattedWrite(lockingTextWriter, fmt, args);
+        std.format.formattedWrite(lockingTextWriter(), fmt, args);
     }
 
 /**
@@ -804,7 +809,7 @@ Throws: $(D Exception) if the file is not opened.
 */
     void writefln(Char, A...)(in Char[] fmt, A args)
     {
-        auto w = lockingTextWriter;
+        auto w = lockingTextWriter();
         std.format.formattedWrite(w, fmt, args);
         w.put('\n');
     }
@@ -1061,6 +1066,7 @@ Returns the file number corresponding to this object.
         return .fileno(cast(FILE*) _p.handle);
     }
 
+// Note: This was documented until 2013/08
 /*
 Range that reads one line at a time.  Returned by $(LREF byLine).
 
@@ -1068,22 +1074,62 @@ Allows to directly use range operations on lines of a file.
 */
     struct ByLine(Char, Terminator)
     {
+    private:
+        /* Ref-counting stops the source range's ByLineImpl
+         * from getting out of sync after the range is copied, e.g.
+         * when accessing range.front, then using std.range.take,
+         * then accessing range.front again. */
+        alias Impl = RefCounted!(ByLineImpl!(Char, Terminator),
+            RefCountedAutoInitialize.no);
+        Impl impl;
+        
+        static if (isScalarType!Terminator)
+            enum defTerm = '\n';
+        else
+            enum defTerm = cast(Terminator)"\n";
+        
+    public:
+        this(File f, KeepTerminator kt = KeepTerminator.no,
+                Terminator terminator = defTerm)
+        {
+            impl = Impl(f, kt, terminator);
+        }
+        
+        @property bool empty()
+        {
+            return impl.refCountedPayload.empty;
+        }
+
+        @property Char[] front()
+        {
+            return impl.refCountedPayload.front;
+        }
+
+        void popFront()
+        {
+            impl.refCountedPayload.popFront();
+        }
+    }
+
+    private struct ByLineImpl(Char, Terminator)
+    {
+    private:
         File file;
         Char[] line;
         Terminator terminator;
         KeepTerminator keepTerminator;
         bool first_call = true;
 
-        this(File f, KeepTerminator kt = KeepTerminator.no,
-                Terminator terminator = '\n')
+    public:
+        this(File f, KeepTerminator kt, Terminator terminator)
         {
             file = f;
             this.terminator = terminator;
             keepTerminator = kt;
         }
 
-        /// Range primitive implementations.
-        @property bool empty() const
+        // Range primitive implementations.
+        @property bool empty()
         {
             if (line !is null) return false;
             if (!file.isOpen) return true;
@@ -1091,21 +1137,19 @@ Allows to directly use range operations on lines of a file.
             // First read ever, must make sure stream is not empty. We
             // do so by reading a character and putting it back. Doing
             // so is guaranteed to work on all files opened in all
-            // buffering modes. Although we internally mutate the
-            // state of the file, we restore everything, which
-            // justifies the cast.
-            auto mutableFP = (cast(File*) &file).getFP();
-            auto c = fgetc(mutableFP);
+            // buffering modes.
+            auto fp = file.getFP();
+            auto c = fgetc(fp);
             if (c == -1)
             {
+                file.detach();
                 return true;
             }
-            ungetc(c, mutableFP) == c
+            ungetc(c, fp) == c
                 || assert(false, "Bug in cstdlib implementation");
             return false;
         }
 
-        /// Ditto
         @property Char[] front()
         {
             if (first_call)
@@ -1116,7 +1160,6 @@ Allows to directly use range operations on lines of a file.
             return line;
         }
 
-        /// Ditto
         void popFront()
         {
             assert(file.isOpen);
@@ -1130,7 +1173,17 @@ Allows to directly use range operations on lines of a file.
             else if (keepTerminator == KeepTerminator.no
                     && std.algorithm.endsWith(line, terminator))
             {
-                line = line.ptr[0 .. line.length - 1];
+                static if (isScalarType!Terminator)
+                    enum tlen = 1;
+                else static if (isArray!Terminator)
+                {
+                    static assert(
+                        is(Unqual!(ElementEncodingType!Terminator) == Char));
+                    const tlen = terminator.length;
+                }
+                else
+                    static assert(false);
+                line = line.ptr[0 .. line.length - tlen];
             }
         }
     }
@@ -1139,13 +1192,16 @@ Allows to directly use range operations on lines of a file.
 Returns an input range set up to read from the file handle one line 
 at a time.
 
-The element type for the range will be $(D Char[]).
+The element type for the range will be $(D Char[]). Range primitives 
+may throw $(D StdioException) on I/O error.
 
-Params:
-Char = Character type for each line, defaulting to $(D char). If 
-Char is mutable then each $(D front) will not persist after $(D 
+Note:
+Each $(D front) will not persist after $(D 
 popFront) is called, so the caller must copy its contents (e.g. by 
 calling $(D to!string)) if retention is needed.
+
+Params:
+Char = Character type for each line, defaulting to $(D char).
 keepTerminator = Use $(D KeepTerminator.yes) to include the 
 terminator at the end of each line.
 terminator = Line separator ($(D '\n') by default).
@@ -1167,23 +1223,39 @@ void main()
 
 Example:
 ----
-import std.stdio;
-// Count lines in file using a foreach
+import std.range, std.stdio;
+// Read lines using foreach.
 void main()
 {
-    auto file = File("file.txt"); // open for reading
-    ulong lineCount = 0;
-    foreach (line; file.byLine())
+    auto file = File("file.txt"); // Open for reading
+    auto range = file.byLine();
+    // Print first three lines
+    foreach (line; range.take(3))
+        writeln(line);
+    // Print remaining lines beginning with '#'
+    foreach (line; range)
     {
-        ++lineCount;
+        if (!line.empty && line[0] == '#')
+            writeln(line);
     }
-    writeln("Lines in file: ", lineCount);
 }
 ----
+Notice that neither example accesses the line data returned by
+$(D front) after the corresponding $(D popFront) call is made (because
+the contents may well have changed).
 */
     auto byLine(Terminator = char, Char = char)
     (KeepTerminator keepTerminator = KeepTerminator.no,
             Terminator terminator = '\n')
+    if (isScalarType!Terminator)
+    {
+        return ByLine!(Char, Terminator)(this, keepTerminator, terminator);
+    }
+
+/// ditto
+    auto byLine(Terminator, Char = char)
+    (KeepTerminator keepTerminator, Terminator terminator)
+    if (is(Unqual!(ElementEncodingType!Terminator) == Char))
     {
         return ByLine!(Char, Terminator)(this, keepTerminator, terminator);
     }
@@ -1202,11 +1274,11 @@ void main()
         {
             assert(false);
         }
-        f.close();
+        f.detach();
+        assert(!f.isOpen);
 
-        void test(string txt, string[] witness,
-                KeepTerminator kt = KeepTerminator.no,
-                bool popFirstLine = false)
+        void testTerm(Terminator)(string txt, string[] witness,
+                KeepTerminator kt, Terminator term, bool popFirstLine)
         {
             uint i;
             std.file.write(deleteme, txt);
@@ -1216,17 +1288,27 @@ void main()
                 f.close();
                 assert(!f.isOpen);
             }
-            auto lines = f.byLine(kt);
+            auto lines = f.byLine(kt, term);
             if (popFirstLine)
             {
                 lines.popFront();
                 i = 1;
             }
+            assert(lines.empty || lines.front is lines.front);
             foreach (line; lines)
             {
                 assert(line == witness[i++]);
             }
             assert(i == witness.length, text(i, " != ", witness.length));
+        }
+        /* Wrap with default args.
+         * Note: Having a default argument for terminator = '\n' would prevent
+         * instantiating Terminator=string (or "\n" would prevent Terminator=char) */
+        void test(string txt, string[] witness,
+                KeepTerminator kt = KeepTerminator.no,
+                bool popFirstLine = false)
+        {
+            testTerm(txt, witness, kt, '\n', popFirstLine);
         }
 
         test("", null);
@@ -1234,12 +1316,44 @@ void main()
         test("asd\ndef\nasdf", [ "asd", "def", "asdf" ]);
         test("asd\ndef\nasdf", [ "asd", "def", "asdf" ], KeepTerminator.no, true);
         test("asd\ndef\nasdf\n", [ "asd", "def", "asdf" ]);
+        test("foo", [ "foo" ], KeepTerminator.no, true);
+        testTerm("bob\r\nmarge\r\nsteve\r\n", ["bob", "marge", "steve"],
+            KeepTerminator.no, "\r\n", false);
+        testTerm("sue\r", ["sue"], KeepTerminator.no, '\r', false);
 
         test("", null, KeepTerminator.yes);
         test("\n", [ "\n" ], KeepTerminator.yes);
         test("asd\ndef\nasdf", [ "asd\n", "def\n", "asdf" ], KeepTerminator.yes);
         test("asd\ndef\nasdf\n", [ "asd\n", "def\n", "asdf\n" ], KeepTerminator.yes);
         test("asd\ndef\nasdf\n", [ "asd\n", "def\n", "asdf\n" ], KeepTerminator.yes, true);
+        test("foo", [ "foo" ], KeepTerminator.yes, false);
+        testTerm("bob\r\nmarge\r\nsteve\r\n", ["bob\r\n", "marge\r\n", "steve\r\n"],
+            KeepTerminator.yes, "\r\n", false);
+        testTerm("sue\r", ["sue\r"], KeepTerminator.yes, '\r', false);
+
+        auto file = File.tmpfile();
+        file.write("1\n2\n3\n");
+
+        // bug 9599
+        file.rewind();
+        File.ByLine!(char, char) fbl = file.byLine();
+        auto fbl2 = fbl;
+        assert(fbl.front == "1");
+        assert(fbl.front is fbl2.front);
+        assert(fbl.take(1).equal(["1"]));
+        assert(fbl.equal(["2", "3"]));
+        assert(fbl.empty);
+        assert(file.isOpen); // we still have a valid reference
+        
+        file.rewind();
+        fbl = file.byLine();
+        assert(!fbl.drop(2).empty);
+        assert(fbl.equal(["3"]));
+        assert(fbl.empty);
+        assert(file.isOpen);
+        
+        file.detach();
+        assert(!file.isOpen);
     }
 
     template byRecord(Fields...)
@@ -1269,7 +1383,8 @@ void main()
     }
 
 
-    /**
+    // Note: This was documented until 2013/08
+    /*
      * Range that reads a chunk at a time.
      */
     struct ByChunk
@@ -1323,10 +1438,17 @@ void main()
     }
 
 /**
-Iterates through a file a chunk at a time by using $(D foreach).
+Returns an input range set up to read from the file handle a chunk at a 
+time.
+
+The element type for the range will be $(D ubyte[]). Range primitives 
+may throw $(D StdioException) on I/O error.
+
+Note: Each $(D front) will not persist after $(D 
+popFront) is called, so the caller must copy its contents (e.g. by 
+calling $(D buffer.dup)) if retention is needed.
 
 Example:
-
 ---------
 void main()
 {
@@ -1336,15 +1458,22 @@ void main()
   }
 }
 ---------
-
 The content of $(D buffer) is reused across calls. In the example
 above, $(D buffer.length) is 4096 for all iterations, except for the
 last one, in which case $(D buffer.length) may be less than 4096 (but
 always greater than zero).
 
-In case of an I/O error, an $(D StdioException) is thrown.
+Example:
+---
+import std.algorithm, std.stdio;
+
+void main()
+{
+    stdin.byChunk(1024).copy(stdout.lockingTextWriter());
+}
+---
  */
-    ByChunk byChunk(size_t chunkSize)
+    auto byChunk(size_t chunkSize)
     {
         return ByChunk(this, chunkSize);
     }
@@ -1372,7 +1501,8 @@ In case of an I/O error, an $(D StdioException) is thrown.
         assert(i == witness.length);
     }
 
-/**
+// Note: This was documented until 2013/08
+/*
 $(D Range) that locks the file and allows fast writing to it.
  */
     struct LockingTextWriter
@@ -1392,15 +1522,20 @@ $(D Range) that locks the file and allows fast writing to it.
 
         ~this()
         {
-            FUNLOCK(fps);
-            fps = null;
-            handle = null;
+            if(fps)
+            {
+                FUNLOCK(fps);
+                fps = null;
+                handle = null;
+            }
         }
 
         this(this)
         {
-            enforce(fps);
-            FLOCK(fps);
+            if(fps)
+            {
+                FLOCK(fps);
+            }
         }
 
         /// Range primitive implementations.
@@ -1506,8 +1641,11 @@ $(D Range) that locks the file and allows fast writing to it.
         }
     }
 
-/// Convenience function.
-    @property LockingTextWriter lockingTextWriter()
+/** Returns an output range that locks the file and allows fast writing to it.
+
+See $(LREF byChunk) for an example.
+*/
+    auto lockingTextWriter()
     {
         return LockingTextWriter(this);
     }
@@ -1861,6 +1999,19 @@ unittest
         assert(cast(char[]) std.file.read(deleteme) ==
                 "A\nB\nA\nB\nA\nB\nA\nB\n");
 }
+
+unittest
+{
+    static auto useInit(T)(T ltw)
+    {
+        T val;
+        val = ltw;
+        val = T.init;
+        return val;
+    }
+    useInit(stdout.lockingTextWriter());
+}
+
 
 /***********************************
  * If the first argument $(D args[0]) is a $(D FILE*), use
@@ -2411,18 +2562,17 @@ unittest
 }
 
 /**
-Iterates through a file a chunk at a time by using $(D
-foreach).
+Iterates through a file a chunk at a time by using $(D foreach).
 
 Example:
 
 ---------
 void main()
 {
-  foreach (ubyte[] buffer; chunks(stdin, 4096))
-  {
-    ... use buffer ...
-  }
+    foreach (ubyte[] buffer; chunks(stdin, 4096))
+    {
+        ... use buffer ...
+    }
 }
 ---------
 
@@ -2433,8 +2583,11 @@ The content of $(D buffer) is reused across calls. In the
 
  In case of an I/O error, an $(D StdioException) is thrown.
 */
-
-struct chunks
+auto chunks(File f, size_t size)
+{
+    return ChunksImpl(f, size);
+}
+private struct ChunksImpl
 {
     private File f;
     private size_t size;
@@ -2462,7 +2615,7 @@ struct chunks
 
     int opApply(D)(scope D dg)
     {
-        const maxStackSize = 1024 * 16;
+        enum maxStackSize = 1024 * 16;
         ubyte[] buffer = void;
         if (size < maxStackSize)
             buffer = (cast(ubyte*) alloca(size))[0 .. size];
@@ -2494,7 +2647,7 @@ struct chunks
 
 unittest
 {
-        //printf("Entering test at line %d\n", __LINE__);
+    //printf("Entering test at line %d\n", __LINE__);
     scope(failure) printf("Failed test at line %d\n", __LINE__);
     auto deleteme = testFilename();
     scope(exit) { std.file.remove(deleteme); }

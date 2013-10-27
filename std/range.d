@@ -188,7 +188,7 @@ $(BOOKTABLE ,
 These _range-construction tools are implemented using templates; but sometimes
 an object-based interface for ranges is needed. For this purpose, this module
 provides a number of object and $(D interface) definitions that can be used to
-wrap around _range objects created by the above templates:
+wrap around _range objects created by the above templates.
 
 $(BOOKTABLE ,
     $(TR $(TD $(D $(LREF InputRange)))
@@ -228,6 +228,9 @@ $(BOOKTABLE ,
     $(TR $(TD $(D $(LREF InputRangeObject)))
         $(TD Class that implements the $(D InputRange) interface and wraps the
         input _range methods in virtual functions.
+    ))
+    $(TR $(TD $(D $(LREF RefRange)))
+        $(TD Wrapper around a forward _range that gives it reference semantics.
     ))
 )
 
@@ -1021,10 +1024,32 @@ $(D void).
  */
 template ElementType(R)
 {
-    static if (is(typeof((inout int = 0){ R r = void; return r.front; }()) T))
+    static if (is(typeof(lvalueOf!R.front) T))
         alias T ElementType;
     else
         alias void ElementType;
+}
+
+///
+unittest
+{
+    // Standard arrays: returns the type of the elements of the array
+    static assert(is(ElementType!(byte[]) == byte));
+    static assert(is(ElementType!(int[]) == int));
+
+    // Accessing .front retrieves the decoded dchar
+    static assert(is(ElementType!(char[])  == dchar)); // rvalue
+    static assert(is(ElementType!(wchar[]) == dchar)); // rvalue
+    static assert(is(ElementType!(dchar[]) == dchar)); // lvalue
+
+    // Ditto
+    static assert(is(ElementType!(string) == dchar));
+    static assert(is(ElementType!(wstring) == dchar));
+    static assert(is(ElementType!(dstring) == immutable(dchar)));
+
+    // For ranges it gets the type of .front.
+    auto range = iota(0, 10);
+    static assert(is(ElementType!(typeof(range)) == int));
 }
 
 unittest
@@ -1041,6 +1066,23 @@ unittest
     static assert(is(ElementType!(inout(int)[]) : inout(int)));
 }
 
+unittest
+{
+    static assert(is(ElementType!(int[5]) == int));
+    static assert(is(ElementType!(int[0]) == int));
+    static assert(is(ElementType!(char[5]) == dchar));
+    static assert(is(ElementType!(char[0]) == dchar));
+}
+
+unittest //11336
+{
+    static struct S
+    {
+        this(this) @disable;
+    }
+    static assert(is(ElementType!(S[]) == S));
+}
+
 /**
 The encoding element type of $(D R). For narrow strings ($(D char[]),
 $(D wchar[]) and their qualified variants including $(D string) and
@@ -1051,9 +1093,29 @@ $(D ElementType).
 template ElementEncodingType(R)
 {
     static if (isNarrowString!R)
-        alias typeof((inout int = 0){ R r = void; return r[0]; }()) ElementEncodingType;
+        alias typeof(*lvalueOf!R.ptr) ElementEncodingType;
     else
         alias ElementType!R ElementEncodingType;
+}
+
+///
+unittest
+{
+    // internally the range stores the encoded type
+    static assert(is(ElementEncodingType!(char[])  == char));
+    static assert(is(ElementEncodingType!(wchar[]) == wchar));
+    static assert(is(ElementEncodingType!(dchar[]) == dchar));
+
+    // ditto
+    static assert(is(ElementEncodingType!(string)  == immutable(char)));
+    static assert(is(ElementEncodingType!(wstring) == immutable(wchar)));
+    static assert(is(ElementEncodingType!(dstring) == immutable(dchar)));
+
+    static assert(is(ElementEncodingType!(byte[]) == byte));
+    static assert(is(ElementEncodingType!(int[])  == int));
+
+    auto range = iota(0, 10);
+    static assert(is(ElementEncodingType!(typeof(range)) == int));
 }
 
 unittest
@@ -1072,6 +1134,14 @@ unittest
     static assert(is(ElementType!(typeof(buf)) : void));
 
     static assert(is(ElementEncodingType!(inout char[]) : inout(char)));
+}
+
+unittest
+{
+    static assert(is(ElementEncodingType!(int[5]) == int));
+    static assert(is(ElementEncodingType!(int[0]) == int));
+    static assert(is(ElementEncodingType!(char[5]) == char));
+    static assert(is(ElementEncodingType!(char[0]) == char));
 }
 
 /**
@@ -4198,6 +4268,14 @@ struct Zip(Ranges...)
             return result;
         }
 
+    private void emplaceIfCan(T)(T* addr)
+    {
+        static if(__traits(compiles, emplace(addr)))
+            emplace(addr);
+        else
+            throw new Exception("Range with non-default constructable elements exhausted.");
+    }
+
 /**
    Returns the current iterated element.
 */
@@ -4209,7 +4287,7 @@ struct Zip(Ranges...)
             auto addr = cast(Unqual!(typeof(result[i]))*) &result[i];
             if (ranges[i].empty)
             {
-                emplace(addr);
+                emplaceIfCan(addr);
             }
             else
             {
@@ -4253,7 +4331,7 @@ struct Zip(Ranges...)
                 }
                 else
                 {
-                    emplace(addr);
+                    emplaceIfCan(addr);
                 }
             }
             return result;
@@ -4277,7 +4355,7 @@ struct Zip(Ranges...)
                 }
                 else
                 {
-                    emplace(addr);
+                    emplaceIfCan(addr);
                 }
             }
             return result;
@@ -4300,7 +4378,7 @@ struct Zip(Ranges...)
                     }
                     else
                     {
-                        emplace(addr);
+                        emplaceIfCan(addr);
                     }
                 }
                 return result;
@@ -4642,6 +4720,15 @@ unittest
     auto LL2 = iota(0L, 500L);
     auto z2 = zip([7], LL2);
     assert(equal(z2, [tuple(7, 0L)]));
+}
+
+// Text for Issue 11196
+unittest
+{
+    static struct S { @disable this(); }
+    static assert(__traits(compiles, zip((S[5]).init[])));
+    auto z = zip(StoppingPolicy.longest, cast(S[]) null, new int[1]);
+    assertThrown(zip(StoppingPolicy.longest, cast(S[]) null, new int[1]).front);
 }
 
 /*
@@ -6649,7 +6736,8 @@ private:
 }
 
 /// Ditto
-Chunks!(Source) chunks(Source)(Source source, size_t chunkSize)
+Chunks!Source chunks(Source)(Source source, size_t chunkSize)
+if (isForwardRange!Source)
 {
     return typeof(return)(source, chunkSize);
 }

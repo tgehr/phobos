@@ -69,7 +69,7 @@ BIGDOC_OUTPUT_DIR = /tmp
 SRC_DOCUMENTABLES = index.d $(addsuffix .d,$(STD_MODULES) $(STD_NET_MODULES) $(STD_DIGEST_MODULES) $(EXTRA_DOCUMENTABLES))
 STDDOC = $(DOCSRC)/std.ddoc
 BIGSTDDOC = $(DOCSRC)/std_consolidated.ddoc
-DDOCFLAGS=$(MODEL_FLAG) -d -c -o- -version=StdDdoc -I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS)
+DDOCFLAGS=$(MODEL_FLAG) -w -d -c -o- -version=StdDdoc -I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS)
 
 # BUILD can be debug or release, but is unset by default; recursive
 # invocation will set it. See the debug and release targets below.
@@ -107,7 +107,7 @@ else
 endif
 
 # Set CFLAGS
-CFLAGS :=
+CFLAGS=
 ifneq (,$(filter cc% gcc% clang% icc% egcc%, $(CC)))
 	CFLAGS += $(MODEL_FLAG) $(PIC)
 	ifeq ($(BUILD),debug)
@@ -118,7 +118,7 @@ ifneq (,$(filter cc% gcc% clang% icc% egcc%, $(CC)))
 endif
 
 # Set DFLAGS
-DFLAGS := -I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS) -w -d $(MODEL_FLAG) $(PIC)
+DFLAGS=-I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS) -w -d $(MODEL_FLAG) $(PIC)
 ifeq ($(BUILD),debug)
 	DFLAGS += -g -debug
 else
@@ -136,16 +136,7 @@ else
 	PATHSEP:=$(shell echo "\\")
 endif
 
-# Set LINKOPTS
-ifeq (,$(findstring win,$(OS)))
-    ifeq (freebsd,$(OS))
-        LINKOPTS=-L-L$(ROOT)
-    else
-        LINKOPTS=-L-ldl -L-L$(ROOT)
-    endif
-else
-    LINKOPTS=-L/co $(LIB)
-endif
+LINKDL:=$(if $(findstring $(OS),linux),-L-ldl,)
 
 # Set DDOC, the documentation generator
 DDOC=$(DMD)
@@ -202,7 +193,8 @@ EXTRA_MODULES += $(EXTRA_DOCUMENTABLES) $(addprefix			\
 	std/internal/digest/, sha_SSSE3 ) $(addprefix \
 	std/internal/math/, biguintcore biguintnoasm biguintx86	\
 	gammafunction errorfunction) $(addprefix std/internal/, \
-	processinit uni uni_tab unicode_tables)
+	processinit uni uni_tab unicode_tables \
+	unicode_comp unicode_decomp unicode_grapheme unicode_norm)
 
 # Aggregate all D modules relevant to this build
 D_MODULES = crc32 $(STD_MODULES) $(EXTRA_MODULES) $(STD_NET_MODULES) $(STD_DIGEST_MODULES)
@@ -274,13 +266,13 @@ $(LIB) : $(OBJS) $(ALL_D_FILES) $(DRUNTIME)
 dll : $(ROOT)/libphobos2.so
 
 $(ROOT)/libphobos2.so: $(ROOT)/$(SONAME)
-	ln -sf $(notdir $(LIBSO)) $@ 
+	ln -sf $(notdir $(LIBSO)) $@
 
 $(ROOT)/$(SONAME): $(LIBSO)
 	ln -sf $(notdir $(LIBSO)) $@
 
 $(LIBSO): $(OBJS) $(ALL_D_FILES) $(DRUNTIME)
-	$(DMD) $(DFLAGS) -shared -debuglib= -defaultlib= -of$@ -L-soname=$(SONAME) $(DRUNTIMESO) $(D_FILES) $(OBJS)
+	$(DMD) $(DFLAGS) -shared -debuglib= -defaultlib= -of$@ -L-soname=$(SONAME) $(DRUNTIMESO) $(LINKDL) $(D_FILES) $(OBJS)
 
 ifeq (osx,$(OS))
 # Build fat library that combines the 32 bit and the 64 bit libraries
@@ -291,22 +283,42 @@ endif
 $(addprefix $(ROOT)/unittest/,$(DISABLED_TESTS)) :
 	@echo Testing $@ - disabled
 
-$(ROOT)/unittest/%$(DOTEXE) : %.d $(LIB) $(ROOT)/emptymain.d
-	@echo Testing $@
-	$(QUIET)$(DMD) $(DFLAGS) -unittest $(LINKOPTS) $(subst /,$(PATHSEP),"-of$@") \
-	 	$(ROOT)/emptymain.d $<
+UT_D_OBJS:=$(addprefix $(ROOT)/unittest/,$(addsuffix .o,$(D_MODULES)))
+$(UT_D_OBJS): $(ROOT)/unittest/%.o: $(D_FILES)
+	$(DMD) $(DFLAGS) -unittest -c -of$@ $*.d
+
+ifneq (linux,$(OS))
+
+$(ROOT)/unittest/test_runner: $(DRUNTIME_PATH)/src/test_runner.d $(UT_D_OBJS) $(OBJS) $(DRUNTIME)
+	$(DMD) $(DFLAGS) -unittest -of$@ $(DRUNTIME_PATH)/src/test_runner.d $(UT_D_OBJS) $(OBJS) $(DRUNTIME) -defaultlib= -debuglib= -L-lcurl
+
+else
+
+UT_LIBSO:=$(ROOT)/unittest/libphobos2-ut.so
+
+$(UT_LIBSO): override PIC:=-fPIC
+$(UT_LIBSO): $(UT_D_OBJS) $(OBJS) $(DRUNTIMESO)
+	$(DMD) $(DFLAGS) -shared -unittest -of$@ $(UT_D_OBJS) $(OBJS) $(DRUNTIMESO) $(LINKDL) -defaultlib= -debuglib= -L-lcurl
+
+$(ROOT)/unittest/test_runner: $(DRUNTIME_PATH)/src/test_runner.d $(UT_LIBSO)
+	$(DMD) $(DFLAGS) -of$@ $< -L$(UT_LIBSO) -defaultlib= -debuglib=
+
+endif
+
+# macro that returns the module name given the src path
+moduleName=$(subst /,.,$(1))
+
+$(ROOT)/unittest/%$(DOTEXE) : $(ROOT)/unittest/test_runner
+	@mkdir -p $(dir $@)
 # make the file very old so it builds and runs again if it fails
 	@touch -t 197001230123 $@
 # run unittest in its own directory
-	$(QUIET)$(RUN) $@
+	$(QUIET)$(RUN) $< $(call moduleName,$*)
 # succeeded, render the file new again
 	@touch $@
 
 # Disable implicit rule
 %$(DOTEXE) : %$(DOTOBJ)
-
-$(ROOT)/emptymain.d : $(ROOT)/.directory
-	@echo 'void main(){}' >$@
 
 $(ROOT)/.directory :
 	mkdir -p $(ROOT) || exists $(ROOT)
@@ -328,7 +340,7 @@ install2 : release
 	cp -r etc/* $(INSTALL_DIR)/import/etc/
 	cp LICENSE_1_0.txt $(INSTALL_DIR)/phobos-LICENSE.txt
 
-$(DRUNTIME) :
+$(DRUNTIME) $(DRUNTIMESO) :
 	$(MAKE) -C $(DRUNTIME_PATH) -f posix.mak MODEL=$(MODEL)
 
 ###########################################################

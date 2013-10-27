@@ -42,14 +42,14 @@ version (unittest)
 {
     import core.thread;
 
-    private @property string deleteme()
+    private @property string deleteme() @safe
     {
         static _deleteme = "deleteme.dmd.unittest.pid";
         static _first = true;
 
         if(_first)
         {
-            _deleteme = buildPath(tempDir(), _deleteme) ~ to!string(getpid());
+            _deleteme = buildPath(tempDir(), _deleteme) ~ to!string(thisProcessID);
             _first = false;
         }
 
@@ -99,7 +99,7 @@ class FileException : Exception
             file = The file where the error occurred.
             line = The line where the error occurred.
      +/
-    this(in char[] name, in char[] msg, string file = __FILE__, size_t line = __LINE__)
+    this(in char[] name, in char[] msg, string file = __FILE__, size_t line = __LINE__) @safe pure
     {
         if(msg.empty)
             super(name.idup, file, line);
@@ -114,15 +114,17 @@ class FileException : Exception
         in Windows, $(D_PARAM errno) in Posix).
 
         Params:
-            name = Name of file for which the error occurred.
-            msg  = Message describing the error.
-            file = The file where the error occurred.
-            line = The line where the error occurred.
+            name  = Name of file for which the error occurred.
+            errno = The error number.
+            file  = The file where the error occurred.
+                    Defaults to $(D __FILE__).
+            line  = The line where the error occurred.
+                    Defaults to $(D __LINE__).
      +/
     version(Windows) this(in char[] name,
                           uint errno = .GetLastError(),
                           string file = __FILE__,
-                          size_t line = __LINE__)
+                          size_t line = __LINE__) @safe
     {
         this(name, sysErrorString(errno), file, line);
         this.errno = errno;
@@ -130,7 +132,7 @@ class FileException : Exception
     else version(Posix) this(in char[] name,
                              uint errno = .errno,
                              string file = __FILE__,
-                             size_t line = __LINE__)
+                             size_t line = __LINE__) @trusted
     {
         auto s = strerror(errno);
         this(name, to!string(s), file, line);
@@ -847,7 +849,7 @@ unittest
 /++
     Returns whether the given file (or directory) exists.
  +/
-bool exists(in char[] name)
+bool exists(in char[] name) @trusted
 {
     version(Windows)
     {
@@ -1592,6 +1594,92 @@ unittest
     assert(s.length);
 }
 
+version (OSX)
+    private extern (C) int _NSGetExecutablePath(char* buf, uint* bufsize);
+else version (FreeBSD)
+    private extern (C) int sysctl (const int* name, uint namelen, void* oldp,
+        size_t* oldlenp, const void* newp, size_t newlen);
+
+/**
+ * Returns the full path of the current executable.
+ *
+ * Throws:
+ * $(XREF object, Exception)
+ */
+@trusted string thisExePath ()
+{
+    version (OSX)
+    {
+        import core.sys.posix.stdlib : realpath;
+
+        uint size;
+
+        _NSGetExecutablePath(null, &size); // get the length of the path
+        auto buffer = new char[size];
+        _NSGetExecutablePath(buffer.ptr, &size);
+
+        auto absolutePath = realpath(buffer.ptr, null); // let the function allocate
+
+        scope (exit)
+        {
+            if (absolutePath)
+                free(absolutePath);
+        }
+
+        errnoEnforce(absolutePath);
+        return to!(string)(absolutePath);
+    }
+    else version (linux)
+    {
+        return readLink("/proc/self/exe");
+    }
+    else version (Windows)
+    {
+        wchar[MAX_PATH] buf;
+        wchar[] buffer = buf[];
+
+        while (true)
+        {
+            auto len = GetModuleFileNameW(null, buffer.ptr, cast(DWORD) buffer.length);
+            enforce(len, sysErrorString(GetLastError()));
+            if (len != buffer.length)
+                return to!(string)(buffer[0 .. len]);
+            buffer.length *= 2;
+        }
+    }
+    else version (FreeBSD)
+    {
+        enum
+        {
+            CTL_KERN = 1,
+            KERN_PROC = 14,
+            KERN_PROC_PATHNAME = 12
+        }
+
+        int[4] mib = [CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1];
+        size_t len;
+
+        auto result = sysctl(mib.ptr, mib.length, null, &len, null, 0); // get the length of the path
+        errnoEnforce(result == 0);
+
+        auto buffer = new char[len - 1];
+        result = sysctl(mib.ptr, mib.length, buffer.ptr, &len, null, 0);
+        errnoEnforce(result == 0);
+
+        return buffer.assumeUnique;
+    }
+    else
+        static assert(0, "thisExePath is not supported on this platform");
+}
+
+unittest
+{
+    auto path = thisExePath();
+
+    assert(path.exists);
+    assert(path.isAbsolute);
+    assert(path.isFile);
+}
 
 version(StdDdoc)
 {
@@ -2623,21 +2711,18 @@ unittest
         //writeln(name);
         assert(e.isFile || e.isDir, e.name);
     }
-}
 
-unittest
-{
     //issue 7264
-    foreach (string name; dirEntries(".", "*.d", SpanMode.breadth))
+    foreach (string name; dirEntries(testdir, "*.d", SpanMode.breadth))
     {
 
     }
-    foreach (entry; dirEntries(".", SpanMode.breadth))
+    foreach (entry; dirEntries(testdir, SpanMode.breadth))
     {
         static assert(is(typeof(entry) == DirEntry));
     }
     //issue 7138
-    auto a = array(dirEntries(".", SpanMode.shallow));
+    auto a = array(dirEntries(testdir, SpanMode.shallow));
 }
 
 /++
@@ -2954,7 +3039,7 @@ meantime.
 The POSIX $(D tempDir) algorithm is inspired by Python's
 $(LINK2 http://docs.python.org/library/tempfile.html#tempfile.tempdir, $(D tempfile.tempdir)).
 */
-string tempDir()
+string tempDir() @trusted
 {
     static string cache;
     if (cache is null)

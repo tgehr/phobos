@@ -798,8 +798,16 @@ T toImpl(T, S)(S value)
     }
     else static if (isExactSomeString!S)
     {
-        // other string-to-string conversions always run decode/encode
-        return toStr!T(value);
+        // other string-to-string
+        //Use Appender directly instead of toStr, which also uses a formatedWrite
+        auto w = appender!T();
+        w.put(value);
+        return w.data;
+    }
+    else static if (isIntegral!S && !is(S == enum))
+    {
+        // other integral-to-string conversions with default radix
+        return toImpl!(T, S)(value, 10);
     }
     else static if (is(S == void[]) || is(S == const(void)[]) || is(S == immutable(void)[]))
     {
@@ -819,6 +827,39 @@ T toImpl(T, S)(S value)
         // It is unsafe because we cannot guarantee that the pointer is null terminated.
         return value ? cast(T) value[0 .. strlen(value)].dup : cast(string)null;
     }
+    else static if (isSomeString!T && is(S == enum))
+    {
+        static if (isSwitchable!(OriginalType!S) && EnumMembers!S.length <= 50)
+        {
+            switch(value)
+            {
+                foreach (I, member; NoDuplicates!(EnumMembers!S))
+                {
+                    case member:
+                        return to!T(enumRep!(immutable(T), S, I));
+                }
+                default:
+            }
+        }
+        else
+        {
+            foreach (I, member; EnumMembers!S)
+            {
+                if (value == member)
+                    return to!T(enumRep!(immutable(T), S, I));
+            }
+        }
+
+        //Default case, delegate to format
+        //Note: we don't call toStr directly, to avoid duplicate work.
+        auto app = appender!T();
+        app.put("cast(");
+        app.put(S.stringof);
+        app.put(')');
+        FormatSpec!char f;
+        formatValue(app, cast(OriginalType!S)value, f);
+        return app.data;
+    }
     else
     {
         // other non-string values runs formatting
@@ -826,45 +867,78 @@ T toImpl(T, S)(S value)
     }
 }
 
-/*@safe pure */unittest
+/*
+    Check whether type $(D T) can be used in a switch statement.
+    This is useful for compile-time generation of switch case statements.
+*/
+private template isSwitchable(E)
 {
-    // string to string conversion
-    debug(conv) scope(success) writeln("unittest @", __FILE__, ":", __LINE__, " succeeded.");
+    enum bool isSwitchable = is(typeof({
+        switch (E.init) { default: }
+    }));
+}
 
-    alias TypeTuple!(char, wchar, dchar) Chars;
-    foreach (LhsC; Chars)
+//
+unittest
+{
+    static assert(isSwitchable!int);
+    static assert(!isSwitchable!double);
+    static assert(!isSwitchable!real);
+}
+
+//Static representation of the index I of the enum S,
+//In representation T.
+//T must be an immutable string (avoids un-necessary initializations).
+private template enumRep(T, S, size_t I)
+if (is (T == immutable) && isExactSomeString!T && is(S == enum))
+{
+    static T enumRep = to!T(__traits(allMembers, S)[I]);
+}
+
+@safe pure unittest
+{
+    void dg()
     {
-        alias TypeTuple!(LhsC[], const(LhsC)[], immutable(LhsC)[]) LhStrings;
-        foreach (Lhs; LhStrings)
+        // string to string conversion
+        debug(conv) scope(success) writeln("unittest @", __FILE__, ":", __LINE__, " succeeded.");
+
+        alias TypeTuple!(char, wchar, dchar) Chars;
+        foreach (LhsC; Chars)
         {
-            foreach (RhsC; Chars)
+            alias TypeTuple!(LhsC[], const(LhsC)[], immutable(LhsC)[]) LhStrings;
+            foreach (Lhs; LhStrings)
             {
-                alias TypeTuple!(RhsC[], const(RhsC)[], immutable(RhsC)[])
-                    RhStrings;
-                foreach (Rhs; RhStrings)
+                foreach (RhsC; Chars)
                 {
-                    Lhs s1 = to!Lhs("wyda");
-                    Rhs s2 = to!Rhs(s1);
-                    //writeln(Lhs.stringof, " -> ", Rhs.stringof);
-                    assert(s1 == to!Lhs(s2));
+                    alias TypeTuple!(RhsC[], const(RhsC)[], immutable(RhsC)[])
+                        RhStrings;
+                    foreach (Rhs; RhStrings)
+                    {
+                        Lhs s1 = to!Lhs("wyda");
+                        Rhs s2 = to!Rhs(s1);
+                        //writeln(Lhs.stringof, " -> ", Rhs.stringof);
+                        assert(s1 == to!Lhs(s2));
+                    }
                 }
             }
         }
-    }
 
-    foreach (T; Chars)
-    {
-        foreach (U; Chars)
+        foreach (T; Chars)
         {
-            T[] s1 = to!(T[])("Hello, world!");
-            auto s2 = to!(U[])(s1);
-            assert(s1 == to!(T[])(s2));
-            auto s3 = to!(const(U)[])(s1);
-            assert(s1 == to!(T[])(s3));
-            auto s4 = to!(immutable(U)[])(s1);
-            assert(s1 == to!(T[])(s4));
+            foreach (U; Chars)
+            {
+                T[] s1 = to!(T[])("Hello, world!");
+                auto s2 = to!(U[])(s1);
+                assert(s1 == to!(T[])(s2));
+                auto s3 = to!(const(U)[])(s1);
+                assert(s1 == to!(T[])(s3));
+                auto s4 = to!(immutable(U)[])(s1);
+                assert(s1 == to!(T[])(s4));
+            }
         }
     }
+    dg();
+    assertCTFEable!dg;
 }
 
 @safe pure unittest
@@ -1071,8 +1145,36 @@ unittest
     assert(to!dstring(o) == "cast(EU)5"d);
 }
 
+unittest
+{
+    enum E
+    {
+        foo,
+        bar,
+        doo = foo, // check duplicate switch statements
+    }
+
+    foreach (S; TypeTuple!(string, wstring, dstring, const(char[]), const(wchar[]), const(dchar[])))
+    {
+        auto s1 = to!S(E.foo);
+        auto s2 = to!S(E.foo);
+        assert(s1 == s2);
+        // ensure we don't allocate when it's unnecessary
+        assert(s1 is s2);
+    }
+
+    foreach (S; TypeTuple!(char[], wchar[], dchar[]))
+    {
+        auto s1 = to!S(E.foo);
+        auto s2 = to!S(E.foo);
+        assert(s1 == s2);
+        // ensure each mutable array is unique
+        assert(s1 !is s2);
+    }
+}
+
 /// ditto
-T toImpl(T, S)(S value, uint radix, LetterCase letterCase = LetterCase.upper)
+@trusted pure T toImpl(T, S)(S value, uint radix, LetterCase letterCase = LetterCase.upper)
     if (isIntegral!S &&
         isExactSomeString!T)
 in
@@ -1081,38 +1183,67 @@ in
 }
 body
 {
-    static if (!is(IntegralTypeOf!S == ulong))
-    {
-        enforce(radix >= 2 && radix <= 36, new ConvException("Radix error"));
-        if (radix == 10)
-            return to!string(value);     // handle signed cases only for radix 10
-        return to!string(cast(ulong) value, radix, letterCase);
-    }
-    else
-    {
-        char[value.sizeof * 8] buffer;
-        uint i = buffer.length;
-        char baseChar = 'A';
-        string caseHexDigits = hexDigits;
-        
-        if (letterCase == LetterCase.lower)
-        {
-            baseChar = 'a';
-            caseHexDigits = lowerHexDigits;
-        }      
+    alias EEType = Unqual!(ElementEncodingType!T);
 
-        if (value < radix && value < caseHexDigits.length)
-            return caseHexDigits[cast(size_t)value .. cast(size_t)value + 1];
+    T toStringRadixConvert(size_t bufLen, uint radix = 0, bool neg = false)(uint runtimeRadix = 0)
+    {
+        static if (neg)
+            ulong div = void, mValue = unsigned(-value);
+        else
+            Unsigned!(Unqual!S) div = void, mValue = unsigned(value);
+
+        size_t index = bufLen;
+        EEType[bufLen] buffer = void;
+        char baseChar = letterCase == LetterCase.lower ? 'a' : 'A';
+        char mod = void;
 
         do
         {
-            ubyte c;
-            c = cast(ubyte)(value % radix);
-            value = value / radix;
-            i--;          
-            buffer[i] = cast(char)((c < 10) ? c + '0' : c + baseChar - 10);
-        } while (value);
-        return to!T(buffer[i .. $].dup);
+            static if (radix == 0)
+            {
+                div = cast(S)(mValue / runtimeRadix );
+                mod = cast(ubyte)(mValue % runtimeRadix);
+                mod += mod < 10 ? '0' : baseChar - 10;
+            }
+            else static if (radix > 10)
+            {
+                div = cast(S)(mValue / radix );
+                mod = cast(ubyte)(mValue % radix);
+                mod += mod < 10 ? '0' : baseChar - 10;
+            }
+            else
+            {
+                div = cast(S)(mValue / radix);
+                mod = mValue % radix + '0';
+            }
+            buffer[--index] = cast(char)mod;
+            mValue = div;
+        } while (mValue);
+
+        static if (neg)
+        {
+            buffer[--index] = '-';
+        }
+        return cast(T)buffer[index .. $].dup;
+    }
+
+    enforce(radix >= 2 && radix <= 36, new ConvException("Radix error"));
+
+    switch(radix)
+    {
+        case 10:
+            if (value < 0)
+                return toStringRadixConvert!(S.sizeof * 3 + 1, 10, true)();
+            else
+                return toStringRadixConvert!(S.sizeof * 3, 10)();
+        case 16:
+            return toStringRadixConvert!(S.sizeof * 2, 16)();
+        case 2:
+            return toStringRadixConvert!(S.sizeof * 8, 2)();
+        case 8:
+            return toStringRadixConvert!(S.sizeof * 3, 8)();
+        default:
+           return toStringRadixConvert!(S.sizeof * 6)(radix);
     }
 }
 
@@ -1138,6 +1269,10 @@ body
 
         assert(to!string(to!Int(-10), 10u) == "-10");
     }
+
+    assert(to!string(cast(byte)-10, 16) == "F6");
+    assert(to!string(long.min) == "-9223372036854775808");
+    assert(to!string(long.max) == "9223372036854775807");
 }
 
 // Explicitly undocumented. It will be removed in November 2013.
@@ -1270,8 +1405,8 @@ fit in the narrower type.
  */
 T toImpl(T, S)(S value)
     if (!isImplicitlyConvertible!(S, T) &&
-        (isNumeric!S || isSomeChar!S) && !is(S == enum) &&
-        (isNumeric!T || isSomeChar!T) && !is(T == enum))
+        (isNumeric!S || isSomeChar!S || isBoolean!S) &&
+        (isNumeric!T || isSomeChar!T || isBoolean!T) && !is(T == enum))
 {
     enum sSmallest = mostNegative!S;
     enum tSmallest = mostNegative!T;
@@ -1320,6 +1455,37 @@ T toImpl(T, S)(S value)
 
     char from4 = 'A';
     dchar to4 = to!dchar(from4);
+}
+
+unittest
+{
+    // Narrowing conversions from enum -> integral should be allowed, but they
+    // should throw at runtime if the enum value doesn't fit in the target
+    // type.
+    enum E1 : ulong { A = 1, B = 1UL<<48, C = 0 }
+    assert(to!int(E1.A) == 1);
+    assert(to!bool(E1.A) == true);
+    assertThrown!ConvOverflowException(to!int(E1.B)); // E1.B overflows int
+    assertThrown!ConvOverflowException(to!bool(E1.B)); // E1.B overflows bool
+    assert(to!bool(E1.C) == false);
+
+    enum E2 : long { A = -1L<<48, B = -1<<31, C = 1<<31 }
+    assertThrown!ConvOverflowException(to!int(E2.A)); // E2.A overflows int
+    assertThrown!ConvOverflowException(to!uint(E2.B)); // E2.B overflows uint
+    assert(to!int(E2.B) == -1<<31); // but does not overflow int
+    assert(to!int(E2.C) == 1<<31);  // E2.C does not overflow int
+
+    enum E3 : int { A = -1, B = 1, C = 255, D = 0 }
+    assertThrown!ConvOverflowException(to!ubyte(E3.A));
+    assertThrown!ConvOverflowException(to!bool(E3.A));
+    assert(to!byte(E3.A) == -1);
+    assert(to!byte(E3.B) == 1);
+    assert(to!ubyte(E3.C) == 255);
+    assert(to!bool(E3.B) == true);
+    assertThrown!ConvOverflowException(to!byte(E3.C));
+    assertThrown!ConvOverflowException(to!bool(E3.C));
+    assert(to!bool(E3.D) == false);
+
 }
 
 /**
@@ -1675,7 +1841,8 @@ a ConvException is thrown.
 Enums with floating-point or string base types are not supported.
 */
 T toImpl(T, S)(S value)
-    if (is(T == enum) && !is(S == enum) && is(S : OriginalType!T)
+    if (is(T == enum) && !is(S == enum)
+        && is(typeof(value == OriginalType!T.init))
         && !isFloatingPoint!(OriginalType!T) && !isSomeString!(OriginalType!T))
 {
     foreach (Member; EnumMembers!T)
@@ -3534,25 +3701,18 @@ Given a pointer $(D chunk) to uninitialized memory (but already typed
 as $(D T)), constructs an object of non-$(D class) type $(D T) at that
 address.
 
-This function can be $(D @trusted) if the corresponding constructor of
-$(D T) is $(D @safe).
-
 Returns: A pointer to the newly constructed object (which is the same
 as $(D chunk)).
  */
-T* emplace(T)(T* chunk)
-    if (!is(T == class))
+T* emplace(T)(T* chunk) @safe nothrow pure
 {
-    static T i; // Can't use `= T.init` here because of @@@BUG8902@@@.
-    memcpy(chunk, &i, T.sizeof);
-    return chunk;
-}
-///ditto
-T* emplace(T)(T* chunk)
-    if (is(T == class))
-{
-    *chunk = null;
-    return chunk;
+    static assert (is(T* : void*),
+        format("Cannot emplace a %s because it is qualified.", T.stringof));
+
+    static assert (is(typeof({static T i;})),
+        format("Cannot emplace a %1$s because %1$s.this() is annotated with @disable.", T.stringof));
+
+    return emplaceInitializer(chunk);
 }
 
 version(unittest) private struct __conv_EmplaceTest
@@ -3597,6 +3757,7 @@ unittest
     struct S { @disable this(); }
     S s = void;
     static assert(!__traits(compiles, emplace(&s)));
+    static assert( __traits(compiles, emplace(&s, S.init)));
 }
 
 unittest
@@ -3613,6 +3774,67 @@ unittest
     assert(i is null);
 }
 
+unittest
+{
+    static struct S {int i = 5;}
+    S[2] s2 = void;
+    emplace(&s2);
+    assert(s2[0].i == 5 && s2[1].i == 5);
+}
+
+unittest
+{
+    struct S1
+    {}
+
+    struct S2
+    {
+        void opAssign(S2);
+    }
+
+    S1 s1 = void;
+    S2 s2 = void;
+    S1[2] as1 = void;
+    S2[2] as2 = void;
+    emplace(&s1);
+    emplace(&s2);
+    emplace(&as1);
+    emplace(&as2);
+}
+
+unittest
+{
+    static struct S1
+    {
+        this(this) @disable;
+    }
+    static struct S2
+    {
+        this() @disable;
+    }
+    S1[2] ss1 = void;
+    S2[2] ss2 = void;
+    static assert( __traits(compiles, emplace(&ss1)));
+    static assert(!__traits(compiles, emplace(&ss2)));
+    S1 s1 = S1.init;
+    S2 s2 = S2.init;
+    static assert(!__traits(compiles, emplace(&ss1, s1)));
+    static assert( __traits(compiles, emplace(&ss2, s2)));
+}
+
+unittest
+{
+    struct S
+    {
+        immutable int i;
+    }
+    S s = void;
+    S[2] ss1 = void;
+    S[2] ss2 = void;
+    emplace(&s, 5);
+    emplace(&ss1, s);
+    emplace(&ss2, ss1);
+}
 
 /**
 Given a pointer $(D chunk) to uninitialized memory (but already typed
@@ -3625,11 +3847,92 @@ $(D T) is $(D @safe).
 Returns: A pointer to the newly constructed object (which is the same
 as $(D chunk)).
  */
-T* emplace(T, Args...)(T* chunk, Args args)
+T* emplace(T, Args...)(T* chunk, auto ref Args args)
     if (!is(T == struct) && Args.length == 1)
 {
-    *chunk = args[0];
-    return chunk;
+    alias Arg = Args[0];
+    alias arg = args[0];
+
+    static assert (is(T* : void*),
+        format("Cannot emplace a %s because it is qualified.", T.stringof));
+
+    static assert(is(typeof({T t = args[0];})),
+        format("%s cannot be emplaced from a %s.", T.stringof, Arg.stringof));
+
+    static if (isStaticArray!T)
+    {
+        alias UArg = Unqual!Arg;
+        alias E = typeof(chunk.ptr[0]);
+        enum N = T.length;
+
+        static if (is(Arg : T))
+        {
+            //Matching static array
+            static if (isAssignable!(T, Arg) && !hasElaborateAssign!T)
+                *chunk = arg;
+            else static if (is(UArg == T))
+            {
+                memcpy(chunk, &arg, T.sizeof);
+                static if (hasElaborateCopyConstructor!T)
+                    typeid(T).postblit(cast(void*)&chunk);
+            }
+            else
+                emplace(chunk, cast(T)arg);
+        }
+        else static if (is(Arg : E[]))
+        {
+            //Matching dynamic array
+            static if (is(typeof((*chunk)[] = arg[])) && !hasElaborateAssign!T)
+                (*chunk)[] = arg[];
+            else static if (is(UArg == E[]))
+            {
+                assert(N == chunk.length, "Array length missmatch in emplace");
+                memcpy(cast(void*)chunk, arg.ptr, T.sizeof);
+                static if (hasElaborateCopyConstructor!T)
+                    typeid(T).postblit(cast(void*)&chunk);
+            }
+            else
+                emplace(chunk, cast(E[])arg);
+        }
+        else static if (is(Arg : E))
+        {
+            //Case matching single element to array.
+            static if (is(typeof((*chunk)[] = arg)) && !hasElaborateAssign!T)
+                (*chunk)[] = arg;
+            else static if (is(UArg == E))
+            {
+                //Note: We copy everything, and then postblit just once.
+                //This is as exception safe as what druntime can provide us.
+                foreach(i; 0 .. N)
+                    memcpy(cast(void*)(chunk.ptr + i), &arg, E.sizeof);
+                static if (hasElaborateCopyConstructor!T)
+                    typeid(T).postblit(chunk);
+            }
+            else
+                //Alias this. Coerce.
+                emplace(chunk, cast(E)arg);
+        }
+        else static if (is(typeof(emplace(chunk.ptr, arg))))
+        {
+            //Final case for everything else:
+            //Types that don't match (int to uint[2])
+            //Recursion for multidimensions
+            static if (is(typeof((*chunk)[] = arg)) && !hasElaborateAssign!T)
+                (*chunk)[] = arg;
+
+            foreach(i; 0 .. N)
+                emplace(chunk.ptr + i, arg);
+        }
+        else
+            static assert(0, format("Sorry, this implementation doesn't know how to emplace a %s with a %s", T.stringof, Arg.stringof));
+
+        return chunk;
+    }
+    else
+    {
+        *chunk = arg;
+        return chunk;
+    }
 }
 
 unittest
@@ -3656,43 +3959,115 @@ unittest
     assert(i is k);
 }
 
-// Specialization for struct
+unittest
+{
+    static struct S
+    {
+        int i = 5;
+        void opAssign(S){assert(0);}
+    }
+    S[2] sa = void;
+    S[2] sb;
+    emplace(&sa, sb);
+    assert(sa[0].i == 5 && sa[1].i == 5);
+}
+
+/// ditto
 T* emplace(T, Args...)(T* chunk, auto ref Args args)
     if (is(T == struct))
 {
-    void initialize()
-    {
-        if(auto p = typeid(T).init().ptr)
-            memcpy(chunk, p, T.sizeof);
-        else
-            memset(chunk, 0, T.sizeof);
-    }
+    static assert (is(T* : void*),
+        format("Cannot emplace a %s because it is qualified.", T.stringof));
 
-    static if (is(typeof(chunk.__ctor(args))))
+    static if (Args.length == 1 && is(Args[0] : T) &&
+        is (typeof({T t = args[0];})) //Check for legal postblit
+        )
+    {
+        static if (is(T == Unqual!(Args[0])))
+        {
+            //Types match exactly: we postblit
+            static if (isAssignable!T && !hasElaborateAssign!T)
+                *chunk = args[0];
+            else
+            {
+                memcpy(chunk, &args[0], T.sizeof);
+                static if (hasElaborateCopyConstructor!T)
+                    typeid(T).postblit(chunk);
+            }
+        }
+        else
+            //Alias this. Coerce to type T.
+            emplace(chunk, cast(T)args[0]);
+    }
+    else static if (is(typeof(chunk.__ctor(args))))
     {
         // T defines a genuine constructor accepting args
         // Go the classic route: write .init first, then call ctor
-        initialize();
+        emplaceInitializer(chunk);
         chunk.__ctor(args);
+    }
+    else static if (is(typeof(T.opCall(args))))
+    {
+        //Can be built calling opCall
+        emplaceOpCaller(chunk, args); //emplaceOpCaller is deprecated
     }
     else static if (is(typeof(T(args))))
     {
         // Struct without constructor that has one matching field for
-        // each argument
-        *chunk = T(args);
+        // each argument. Individually emplace each field
+        emplaceInitializer(chunk);
+        foreach (i, ref field; chunk.tupleof[0 .. Args.length])
+            emplace(emplaceGetAddr(field), args[i]);
     }
-    else //static if (Args.length == 1 && is(Args[0] : T))
+    else
     {
-        static assert(Args.length == 1);
-        //static assert(0, T.stringof ~ " " ~ Args.stringof);
-        // initialize();
-        args[0].move(*chunk);
+        //We can't emplace. Try to diagnose a disabled postblit.
+        static assert(!(Args.length == 1 && is(Args[0] : T)),
+            format("Cannot emplace a %1$s because %1$s.this(this) is annotated with @disable.", T.stringof));
+
+        //We can't emplace.
+        static assert(false,
+            format("%s cannot be emplaced from %s.", T.stringof, Args[].stringof));
     }
+
     return chunk;
 }
 
-// Test constructor branch
+//emplace helper functions
+private T* emplaceInitializer(T)(T* chunk) @trusted pure nothrow
+{
+    static if (isAssignable!T && !hasElaborateAssign!T)
+        *chunk = T.init;
+    else
+    {
+        static immutable T init = T.init;
+        memcpy(chunk, &init, T.sizeof);
+    }
+    return chunk;
+}
+private deprecated("Using static opCall for emplace is deprecated. Plase use emplace(chunk, T(args)) instead.")
+T* emplaceOpCaller(T, Args...)(T* chunk, auto ref Args args)
+{
+    static assert (is(typeof({T t = T.opCall(args);})),
+        format("%s.opCall does not return adequate data for construction.", T.stringof));
+    return emplace(chunk, chunk.opCall(args));
+}
+private
+{
+    //Helper to keep simple aggregate emplace safe.
+    auto emplaceGetAddr(T)(ref T t) @trusted
+    if (is(T == Unqual!T))
+    {
+        return &t;
+    }
+    auto emplaceGetAddr(T)(ref T t)
+    if (!is(T == Unqual!T))
+    {
+        return cast(Unqual!T*)&t;
+    }
+}
 
+// Test constructor branch
 unittest
 {
     debug(conv) scope(success) writeln("unittest @", __FILE__, ":", __LINE__, " succeeded.");
@@ -3730,7 +4105,6 @@ unittest
 }
 
 // Test matching fields branch
-
 unittest
 {
     struct S { uint n; }
@@ -3758,9 +4132,563 @@ unittest
     assert(s2.a == 2 && s2.b == 3);
 }
 
-// Test assignment branch
+//opAssign
+unittest
+{
+    static struct S
+    {
+        int i = 5;
+        void opAssign(int){assert(0);}
+        void opAssign(S){assert(0);}
+    }
+    S sa1 = void;
+    S sa2 = void;
+    S sb1 = S(1);
+    emplace(&sa1, sb1);
+    emplace(&sa2, 2);
+    assert(sa1.i == 1);
+    assert(sa2.i == 2);
+}
 
-// FIXME: no tests
+//postblit precedence
+unittest
+{
+    //Works, but breaks in "-w -O" because of @@@9332@@@.
+    //Uncomment test when 9332 is fixed.
+    static struct S
+    {
+        int i;
+
+        this(S other){assert(false);}
+        this(int i){this.i = i;}
+        this(this){}
+    }
+    S a = void;
+    assert(is(typeof({S b = a;})));    //Postblit
+    assert(is(typeof({S b = S(a);}))); //Constructor
+    auto b = S(5);
+    emplace(&a, b);
+    assert(a.i == 5);
+
+    static struct S2
+    {
+        int* p;
+        this(const S2){};
+    }
+    static assert(!is(immutable S2 : S2));
+    S2 s2 = void;
+    immutable is2 = (immutable S2).init;
+    emplace(&s2, is2);
+}
+
+//nested structs and postblit
+unittest
+{
+    static struct S
+    {
+        int* p;
+        this(int i){p = [i].ptr;}
+        this(this)
+        {
+            if (p)
+                p = [*p].ptr;
+        }
+    }
+    static struct SS
+    {
+        S s;
+        void opAssign(const SS)
+        {
+            assert(0);
+        }
+    }
+    SS ssa = void;
+    SS ssb = SS(S(5));
+    emplace(&ssa, ssb);
+    assert(*ssa.s.p == 5);
+    assert(ssa.s.p != ssb.s.p);
+}
+
+//disabled postblit
+unittest
+{
+    static struct S1
+    {
+        int i;
+        @disable this(this);
+    }
+    S1 s1 = void;
+    static assert( __traits(compiles, emplace(&s1, 1)));
+    static assert(!__traits(compiles, emplace(&s1, S1.init)));
+
+    static struct S2
+    {
+        int i;
+        @disable this(this);
+        this(ref S2){}
+    }
+    S2 s2 = void;
+    static assert(!__traits(compiles, emplace(&s2, 1)));
+    static assert( __traits(compiles, emplace(&s2, S2.init)));
+
+    static struct SS1
+    {
+        S1 s;
+    }
+    SS1 ss1 = void;
+    static assert( __traits(compiles, emplace(&ss1)));
+    static assert(!__traits(compiles, emplace(&ss1, SS1.init)));
+
+    static struct SS2
+    {
+        S2 s;
+    }
+    SS2 ss2 = void;
+    static assert( __traits(compiles, emplace(&ss2)));
+    static assert(!__traits(compiles, emplace(&ss2, SS2.init)));
+
+
+    // SS1 sss1 = s1;      //This doesn't compile
+    // SS1 sss1 = SS1(s1); //This doesn't compile
+    // So emplace shouldn't compile either
+    static assert(!__traits(compiles, emplace(&sss1, s1)));
+    static assert(!__traits(compiles, emplace(&sss2, s2)));
+}
+
+//Imutability
+unittest
+{
+    //Castable immutability
+    {
+        static struct S1
+        {
+            int i;
+        }
+        static assert(is( immutable(S1) : S1));
+        S1 sa = void;
+        auto sb = immutable(S1)(5);
+        emplace(&sa, sb);
+        assert(sa.i == 5);
+    }
+    //Un-castable immutability
+    {
+        static struct S2
+        {
+            int* p;
+        }
+        static assert(!is(immutable(S2) : S2));
+        S2 sa = void;
+        auto sb = immutable(S2)(null);
+        assert(!__traits(compiles, emplace(&sa, sb)));
+    }
+}
+
+unittest
+{
+    static struct S
+    {
+        immutable int i;
+        immutable(int)* j;
+    }
+    S s = void;
+    emplace(&s, 1, null);
+    emplace(&s, 2, &s.i);
+    assert(s is S(2, &s.i));
+}
+
+//Context pointer
+unittest
+{
+    int i = 0;
+    {
+        struct S1
+        {
+            void foo(){++i;}
+        }
+        S1 sa = void;
+        S1 sb;
+        emplace(&sa, sb);
+        sa.foo();
+        assert(i == 1);
+    }
+    {
+        struct S2
+        {
+            void foo(){++i;}
+            this(this){}
+        }
+        S2 sa = void;
+        S2 sb;
+        emplace(&sa, sb);
+        sa.foo();
+        assert(i == 2);
+    }
+
+    ////NOTE: THESE WILL COMPILE
+    ////But will not correctly emplace the context pointer
+    ////The problem lies with voldemort, and not emplace.
+    //{
+    //    struct S3
+    //    {
+    //        int k;
+    //        void foo(){++i;}
+    //    }
+    //}
+    //S3 s3 = void;
+    //emplace(&s3);    //S3.init has no context pointer information
+    //emplace(&s3, 1); //No way to obtain context pointer once inside emplace
+}
+
+//Alias this
+unittest
+{
+    static struct S
+    {
+        int i;
+    }
+    //By Ref
+    {
+        static struct SS1
+        {
+            int j;
+            S s;
+            alias s this;
+        }
+        S s = void;
+        SS1 ss = SS1(1, S(2));
+        emplace(&s, ss);
+        assert(s.i == 2);
+    }
+    //By Value
+    {
+        static struct SS2
+        {
+            int j;
+            S s;
+            S foo() @property{return s;}
+            alias foo this;
+        }
+        S s = void;
+        SS2 ss = SS2(1, S(2));
+        emplace(&s, ss);
+        assert(s.i == 2);
+    }
+}
+version(unittest)
+{
+    //Ambiguity
+    struct __std_conv_S
+    {
+        int i;
+        this(__std_conv_SS ss)         {assert(0);}
+        static opCall(__std_conv_SS ss)
+        {
+            __std_conv_S s; s.i = ss.j;
+            return s;
+        }
+    }
+    struct __std_conv_SS
+    {
+        int j;
+        __std_conv_S s;
+        ref __std_conv_S foo() @property {s.i = j; return s;}
+        alias foo this;
+    }
+    static assert(is(__std_conv_SS : __std_conv_S));
+    unittest
+    {
+        __std_conv_S s = void;
+        __std_conv_SS ss = __std_conv_SS(1);
+
+        __std_conv_S sTest1 = ss; //this calls "SS alias this" (and not "S.this(SS)")
+        emplace(&s, ss); //"alias this" should take precedence in emplace over "opCall"
+        assert(s.i == 1);
+    }
+}
+
+//Nested classes
+unittest
+{
+    class A{}
+    static struct S
+    {
+        A a;
+    }
+    S s1 = void;
+    S s2 = S(new A);
+    emplace(&s1, s2);
+    assert(s1.a is s2.a);
+}
+
+//safety & nothrow & CTFE
+unittest
+{
+    //emplace should be safe for anything with no elaborate opassign
+    static struct S1
+    {
+        int i;
+    }
+    static struct S2
+    {
+        int i;
+        this(int j)@safe nothrow{i = j;}
+    }
+
+    int i;
+    S1 s1 = void;
+    S2 s2 = void;
+
+    auto pi = &i;
+    auto ps1 = &s1;
+    auto ps2 = &s2;
+
+    void foo() @safe nothrow
+    {
+        emplace(pi);
+        emplace(pi, 5);
+        emplace(ps1);
+        emplace(ps1, 5);
+        emplace(ps1, S1.init);
+        emplace(ps2);
+        emplace(ps2, 5);
+        emplace(ps2, S2.init);
+    }
+
+    T bar(T)() @property
+    {
+        T t/+ = void+/; //CTFE void illegal
+        emplace(&t, 5);
+        return t;
+    }
+    enum a = bar!int;
+    enum b = bar!S1;
+    enum c = bar!S2;
+}
+
+
+unittest
+{
+    struct S
+    {
+        int[2] get(){return [1, 2];}
+        alias get this;
+    }
+    struct SS
+    {
+        int[2] ii;
+    }
+    struct ISS
+    {
+        int[2] ii;
+    }
+    S s;
+    SS ss = void;
+    ISS iss = void;
+    emplace(&ss, s);
+    emplace(&iss, s);
+    assert(ss.ii == [1, 2]);
+    assert(iss.ii == [1, 2]);
+}
+
+//disable opAssign
+unittest
+{
+    static struct S
+    {
+        @disable void opAssign(S);
+    }
+    S s;
+    emplace(&s, S.init);
+}
+
+//opCall
+unittest
+{
+    int i;
+    //Without constructor
+    {
+        static struct S1
+        {
+            int i;
+            static S1 opCall(int*){assert(0);}
+        }
+        S1 s = void;
+        static assert(!__traits(compiles, emplace(&s,  1)));
+        static assert( __traits(compiles, emplace(&s, &i))); //(works, but deprected)
+    }
+    //With constructor
+    {
+        static struct S2
+        {
+            int i = 0;
+            static S2 opCall(int*){assert(0);}
+            static S2 opCall(int){assert(0);}
+            this(int i){this.i = i;}
+        }
+        S2 s = void;
+        static assert( __traits(compiles, emplace(&s, 1)));  //(works, but deprected)
+        static assert( __traits(compiles, emplace(&s, &i))); //(works, but deprected)
+        emplace(&s,  1);
+        assert(s.i == 1);
+    }
+    //With postblit ambiguity
+    {
+        static struct S3
+        {
+            int i = 0;
+            static S3 opCall(ref S3){assert(0);}
+        }
+        S3 s = void;
+        static assert( __traits(compiles, emplace(&s, S3.init)));
+    }
+}
+
+unittest //@@@9559@@@
+{
+    alias Nullable!int I;
+    auto ints = [0, 1, 2].map!(i => i & 1 ? I.init : I(i))();
+    auto asArray = std.array.array(ints);
+}
+
+unittest //http://forum.dlang.org/thread/nxbdgtdlmwscocbiypjs@forum.dlang.org
+{
+    import std.datetime;
+    static struct A
+    {
+        double i;
+    }
+
+    static struct B
+    {
+        invariant()
+        {
+            if(j == 0)
+                assert(a.i.isNaN, "why is 'j' zero?? and i is not NaN?");
+            else
+                assert(!a.i.isNaN);
+        }
+        SysTime when; // comment this line avoid the breakage
+        int j;
+        A a;
+    }
+
+    B b1 = B.init;
+    assert(&b1); // verify that default eyes invariants are ok;
+
+    auto b2 = B(SysTime(0, UTC()), 1, A(1));
+    assert(&b2);
+    auto b3 = B(SysTime(0, UTC()), 1, A(1));
+    assert(&b3);
+
+    import std.array;
+    auto arr = [b2, b3];
+
+    assert(arr[0].j == 1);
+    assert(arr[1].j == 1);
+    auto a2 = arr.array(); // << bang, invariant is raised, also if b2 and b3 are good
+}
+
+//static arrays
+unittest
+{
+    static struct S
+    {
+        int[2] ii;
+    }
+    static struct IS
+    {
+        immutable int[2] ii;
+    }
+    int[2] ii;
+    S  s   = void;
+    IS ims = void;
+    ubyte ub = 2;
+    emplace(&s, ub);
+    emplace(&s, ii);
+    emplace(&ims, ub);
+    emplace(&ims, ii);
+    uint[2] uu;
+    static assert(!__traits(compiles, {S ss = S(uu);}));
+    static assert(!__traits(compiles, emplace(&s, uu)));
+}
+
+unittest
+{
+    int[2]  sii;
+    int[2]  sii2;
+    uint[2] uii;
+    uint[2] uii2;
+    emplace(&sii, 1);
+    emplace(&sii, 1U);
+    emplace(&uii, 1);
+    emplace(&uii, 1U);
+    emplace(&sii, sii2);
+    //emplace(&sii, uii2); //Sorry, this implementation doesn't know how to...
+    //emplace(&uii, sii2); //Sorry, this implementation doesn't know how to...
+    emplace(&uii, uii2);
+    emplace(&sii, sii2[]);
+    //emplace(&sii, uii2[]); //Sorry, this implementation doesn't know how to...
+    //emplace(&uii, sii2[]); //Sorry, this implementation doesn't know how to...
+    emplace(&uii, uii2[]);
+}
+
+unittest
+{
+    bool allowDestruction = false;
+    struct S
+    {
+        int i;
+        this(this){}
+        ~this(){assert(allowDestruction);}
+    }
+    S s = S(1);
+    S[2] ss1 = void;
+    S[2] ss2 = void;
+    S[2] ss3 = void;
+    emplace(&ss1, s);
+    emplace(&ss2, ss1);
+    emplace(&ss3, ss2[]);
+    assert(ss1[1] == s);
+    assert(ss2[1] == s);
+    assert(ss3[1] == s);
+    allowDestruction = true;
+}
+
+unittest
+{
+    //Checks postblit, construction, and context pointer
+    int count = 0;
+    struct S
+    {
+        this(this)
+        {
+            ++count;
+        }
+        ~this()
+        {
+            --count;
+        }
+    }
+
+    S s;
+    {
+        S[4] ss = void;
+        emplace(&ss, s);
+        assert(count == 4);
+    }
+    assert(count == 0);
+}
+
+unittest
+{
+    struct S
+    {
+        int i;
+    }
+    S s;
+    S[2][2][2] sss = void;
+    emplace(&sss, s);
+}
 
 private void testEmplaceChunk(void[] chunk, size_t typeSize, size_t typeAlignment, string typeName)
 {
@@ -3785,7 +4713,8 @@ $(D T) is $(D @safe).
 
 Returns: A pointer to the newly constructed object.
  */
-T emplace(T, Args...)(void[] chunk, auto ref Args args) if (is(T == class))
+T emplace(T, Args...)(void[] chunk, auto ref Args args)
+    if (is(T == class))
 {
     enum classSize = __traits(classInstanceSize, T);
     testEmplaceChunk(chunk, classSize, classInstanceAlignment!T, T.stringof);
@@ -4050,4 +4979,12 @@ unittest
         static assert(is(typeof(signed(cast(const T)1)) == long));
         static assert(is(typeof(signed(cast(immutable T)1)) == long));
     }
+}
+
+unittest
+{
+    // issue 10874
+    enum Test { a = 0 }
+    ulong l = 0;
+    auto t = l.to!Test;
 }
